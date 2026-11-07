@@ -9,6 +9,8 @@ pub enum AddrSrc {
     Ea,
     /// Effective address plus 2 (second word of a long access).
     EaPlus2,
+    /// Effective address read in program space (PC-relative operands: FC = 2 or 6).
+    EaProg,
     /// Address register `An`.
     An(u8),
     /// Pre-decrement of `An`.

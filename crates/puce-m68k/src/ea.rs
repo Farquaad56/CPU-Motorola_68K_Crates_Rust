@@ -160,6 +160,9 @@ pub fn ea_mask(f: fn(u8, u8) -> bool) -> u64 {
 /// Address source of every operand access (the hooks leave the address in ea).
 const A: AddrSrc = AddrSrc::Ea;
 
+/// Same, for PC-relative operands (program-space function code).
+const AP: AddrSrc = AddrSrc::EaProg;
+
 /// Operand size.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Size {
@@ -305,12 +308,12 @@ macro_rules! ea_plans {
             (Ea::AbsL, Size::Byte) => &[H(HK_EA_ABSL_HI), Pf, H(HK_EA_ABSL_LO), Pf, $b(A)],
             (Ea::AbsL, Size::Word) => &[H(HK_EA_ABSL_HI), Pf, H(HK_EA_ABSL_LO), Pf, $w(A)],
             (Ea::AbsL, Size::Long) => &[H(HK_EA_ABSL_HI), Pf, H(HK_EA_ABSL_LO), Pf, $l(A)],
-            (Ea::PcDisp, Size::Byte) => &[H(HK_EA_PCDISP), Pf, $b(A)],
-            (Ea::PcDisp, Size::Word) => &[H(HK_EA_PCDISP), Pf, $w(A)],
-            (Ea::PcDisp, Size::Long) => &[H(HK_EA_PCDISP), Pf, $l(A)],
-            (Ea::PcIndex, Size::Byte) => &[H(HK_EA_PCINDEX), N(2), Pf, $b(A)],
-            (Ea::PcIndex, Size::Word) => &[H(HK_EA_PCINDEX), N(2), Pf, $w(A)],
-            (Ea::PcIndex, Size::Long) => &[H(HK_EA_PCINDEX), N(2), Pf, $l(A)],
+            (Ea::PcDisp, Size::Byte) => &[H(HK_EA_PCDISP), Pf, $b(AP)],
+            (Ea::PcDisp, Size::Word) => &[H(HK_EA_PCDISP), Pf, $w(AP)],
+            (Ea::PcDisp, Size::Long) => &[H(HK_EA_PCDISP), Pf, $l(AP)],
+            (Ea::PcIndex, Size::Byte) => &[H(HK_EA_PCINDEX), N(2), Pf, $b(AP)],
+            (Ea::PcIndex, Size::Word) => &[H(HK_EA_PCINDEX), N(2), Pf, $w(AP)],
+            (Ea::PcIndex, Size::Long) => &[H(HK_EA_PCINDEX), N(2), Pf, $l(AP)],
             _ => &[],
         }
     }};
@@ -454,7 +457,7 @@ mod tests {
     fn e05_04b_pc_disp() {
         let p = ea_read_plan(Ea::PcDisp, Size::Word);
         assert_eq!(count(p, is_pf), 1);
-        assert!(p.contains(&Tok::Rw(AddrSrc::Ea)));
+        assert!(p.contains(&Tok::Rw(AddrSrc::EaProg))); // program-space read
         assert_eq!(plan_clocks(p), 8); // M68000UM: same as d16(An)
         assert_eq!(plan_clocks(ea_read_plan(Ea::PcIndex, Size::Word)), 10);
     }

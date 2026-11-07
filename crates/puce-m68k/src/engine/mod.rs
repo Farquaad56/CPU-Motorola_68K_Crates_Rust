@@ -193,19 +193,23 @@ impl Engine {
             Tok::Wl(a) => (BusKind::Write, 8, a, fc_data, false),
             Tok::Tas(a) => (BusKind::Read, 4, a, fc_data, true),
         };
+        // PC-relative operands are read in program space.
+        let fc = if src == AddrSrc::EaProg { fc_prog } else { fc };
         // `Ea`, `EaPlus2` and the sources managed by hooks (pre/post-increment, vectors) use
         // the effective address latch. The second word of a long access is 2 bytes further.
         let base = match src {
             AddrSrc::Pc => regs.pc,
-            AddrSrc::Ea => lat.ea,
+            AddrSrc::Ea | AddrSrc::EaProg => lat.ea,
             AddrSrc::EaPlus2 => lat.ea.wrapping_add(2),
             AddrSrc::An(n) => regs.an(n),
             AddrSrc::Sp => regs.a7(),
             _ => lat.ea,
         };
-        let addr = base.wrapping_add(if self.clk >= 4 { 2 } else { 0 });
+        // The bus carries a 24-bit even address; a byte access selects the lane with UDS/LDS.
+        let raw = base.wrapping_add(if self.clk >= 4 { 2 } else { 0 });
+        let addr = raw & crate::pins::ADDR_EVEN_MASK;
         let (uds, lds) = if byte {
-            let odd = addr & 1 != 0;
+            let odd = raw & 1 != 0;
             (!odd, odd)
         } else {
             (true, true)
@@ -250,7 +254,7 @@ impl Engine {
         let wdata = match tok {
             Some(Tok::Wb(_)) => {
                 let b = lat.val as u8 as u16;
-                if cur.addr & 1 != 0 {
+                if cur.lds {
                     b
                 } else {
                     b << 8
@@ -301,7 +305,7 @@ impl Engine {
                         regs.pc = regs.pc.wrapping_add(2);
                     }
                     Some(Tok::Rb(_)) | Some(Tok::Tas(_)) => {
-                        lat.val = if cur.addr & 1 != 0 { d & 0xFF } else { d >> 8 } as u32;
+                        lat.val = if cur.lds { d & 0xFF } else { d >> 8 } as u32;
                     }
                     Some(Tok::Rw(_)) => lat.val = d as u32,
                     Some(Tok::Rl(_)) => {
