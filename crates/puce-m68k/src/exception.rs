@@ -34,6 +34,11 @@ pub const HK_RST_BEGIN: u8 = 0xFA;
 /// Hook: SSP = vector 0, next vector at address 4.
 pub const HK_RST_SSP: u8 = 0xFB;
 
+/// Hook: selects the vector of the instruction at IRD (TRAP #n: 32 + n, TRAPV: 7, CHK: 6).
+pub const HK_VEC_INSN: u8 = 0xFC;
+/// Hook: the pushed PC is the address of the word after the opcode (`PC - 2`).
+pub const HK_PC_NEXT: u8 = 0xFD;
+
 /// Vector number of the privilege violation.
 pub const VEC_PRIVILEGE: u8 = 8;
 /// First autovector (level 1 is vector 25).
@@ -108,6 +113,67 @@ static RESET: [Tok; 9] = [
     Tok::Pf,
 ];
 
+/// Builds an exception plan: the given head (vector, idle cycles, `HK_PRIV`, ...) then the
+/// common frame push, vector fetch and refill.
+macro_rules! frame_plan {
+    ($($h:expr),*) => {
+        [
+            $($h,)*
+            Tok::H(HK_PUSH_PC_LO),
+            Tok::Ww(AddrSrc::Ea),
+            Tok::H(HK_PUSH_SR),
+            Tok::Ww(AddrSrc::Ea),
+            Tok::H(HK_PUSH_PC_HI),
+            Tok::Ww(AddrSrc::Ea),
+            Tok::H(HK_VECTOR),
+            Tok::Rl(AddrSrc::Ea),
+            Tok::H(HK_JUMP),
+            Tok::Pf,
+            Tok::N(2),
+            Tok::Pf,
+        ]
+    };
+}
+
+static TRAP: [Tok; 16] = frame_plan![
+    Tok::H(HK_VEC_INSN),
+    Tok::N(4),
+    Tok::H(HK_PRIV),
+    Tok::H(HK_PC_NEXT)
+];
+static TRAPV: [Tok; 15] = frame_plan![Tok::Pf, Tok::H(HK_VEC_INSN), Tok::H(HK_PRIV)];
+static CHK_POS: [Tok; 16] = frame_plan![
+    Tok::H(HK_VEC_INSN),
+    Tok::N(10),
+    Tok::H(HK_PRIV),
+    Tok::H(HK_PC_NEXT)
+];
+static CHK_NEG: [Tok; 16] = frame_plan![
+    Tok::H(HK_VEC_INSN),
+    Tok::N(8),
+    Tok::H(HK_PRIV),
+    Tok::H(HK_PC_NEXT)
+];
+
+/// TRAP #n (34 clocks): `n nn ns ns ns nV nv np n np`.
+pub fn trap_plan() -> Plan {
+    &TRAP
+}
+
+/// TRAPV with V set (34 clocks): `np` takes the place of the first idle cycle.
+pub fn trapv_plan() -> Plan {
+    &TRAPV
+}
+
+/// CHK trap (`negative`: Dn < 0, 40 clocks; else Dn > bound, 38 clocks, idle cycles included).
+pub fn chk_trap_plan(fast: bool) -> Plan {
+    if fast {
+        &CHK_NEG
+    } else {
+        &CHK_POS
+    }
+}
+
 /// Plan of the privilege violation exception (34 clocks): `nn ns ns ns nV nv np n np`.
 pub fn privilege_violation() -> Plan {
     &PRIVILEGE
@@ -141,7 +207,7 @@ pub fn reset_plan() -> Plan {
 
 /// True when `k` is one of the exception hooks.
 pub fn is_hook(k: u8) -> bool {
-    (HK_PRIV..=HK_RST_SSP).contains(&k)
+    (HK_PRIV..=HK_PC_NEXT).contains(&k)
 }
 
 fn enter_supervisor(cpu: &mut Cpu) {
@@ -155,6 +221,15 @@ pub fn hook(k: u8, cpu: &mut Cpu) {
     match k {
         HK_PRIV => enter_supervisor(cpu),
         HK_SET_PRIV => cpu.lat.vec = VEC_PRIVILEGE,
+        HK_VEC_INSN => {
+            let ird = cpu.lat.ird;
+            cpu.lat.vec = match ird {
+                0x4E40..=0x4E4F => 32 + (ird & 15) as u8,
+                0x4E76 => 7,
+                _ => 6,
+            };
+        }
+        HK_PC_NEXT => cpu.lat.aux = cpu.lat.aux.wrapping_add(2),
         HK_INT_START => {
             enter_supervisor(cpu);
             cpu.regs.sr = (cpu.regs.sr & !0x0700) | (u16::from(cpu.lat.level) << 8);

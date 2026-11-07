@@ -2,7 +2,7 @@
 
 use crate::bus::Bus;
 use crate::decode::{decode, Decoded, InsnId};
-use crate::engine::plan::Plan;
+use crate::engine::plan::{Plan, Tok};
 use crate::engine::{Engine, Latch};
 use crate::exception;
 use crate::insn;
@@ -28,7 +28,12 @@ pub struct Cpu {
     halted: bool,
     /// An exception sequence is running (a bus fault now is a double fault).
     in_exception: bool,
+    /// STOP executed: the CPU idles (4 clocks per step) until an interrupt or a reset.
+    pub(crate) stopped: bool,
 }
+
+/// One idle bus-less cycle of a stopped CPU.
+static STOP_IDLE: [Tok; 1] = [Tok::N(4)];
 
 impl Default for Cpu {
     fn default() -> Self {
@@ -68,6 +73,7 @@ impl Cpu {
             waits: 0,
             halted: false,
             in_exception: false,
+            stopped: false,
         }
     }
 
@@ -98,11 +104,36 @@ impl Cpu {
         self.cur = decode(self.regs.ir);
         self.lat.ird = self.regs.ir;
         if self.cur.id == InsnId::ILLEGAL {
-            self.engine.start(&[]);
+            // Illegal opcode, line A (vector 10), line F (vector 11): exception with the PC of
+            // the instruction itself.
+            let vector = match self.regs.ir >> 12 {
+                0xA => 10,
+                0xF => 11,
+                _ => 4,
+            };
+            self.exception(vector);
             return;
         }
         let plan = insn::plan_for(self.cur.id, self.cur.variant, self);
         self.start_plan(plan);
+    }
+
+    /// At an instruction boundary: takes a pending interrupt or starts the next instruction. A
+    /// stopped CPU (STOP) idles for 4 clocks until an interrupt is taken; the interrupt then
+    /// returns to the instruction after STOP.
+    fn start_next<B: Bus>(&mut self, bus: &mut B) {
+        let ipl = bus.ipl();
+        if self.stopped {
+            self.regs.pc = self.regs.pc.wrapping_add(4);
+            if self.take_interrupt(ipl) {
+                self.stopped = false;
+            } else {
+                self.regs.pc = self.regs.pc.wrapping_sub(4);
+                self.start_plan(&STOP_IDLE);
+            }
+        } else if !self.take_interrupt(ipl) {
+            self.begin_instruction();
+        }
     }
 
     /// Executes up to the next instruction boundary and returns the clocks consumed, wait states
@@ -113,10 +144,7 @@ impl Cpu {
             return 0;
         }
         if self.at_instruction_boundary() {
-            let ipl = bus.ipl();
-            if !self.take_interrupt(ipl) {
-                self.begin_instruction();
-            }
+            self.start_next(bus);
         }
         while !self.at_instruction_boundary() {
             self.tick_bus(bus);
@@ -161,6 +189,7 @@ impl Cpu {
     /// Starts the reset sequence (40 clocks): SR = 0x2700, SSP and PC read from vectors 0 and 1.
     pub fn reset(&mut self) {
         self.halted = false;
+        self.stopped = false;
         self.begin_system_plan(exception::reset_plan());
     }
 
@@ -216,6 +245,7 @@ impl Cpu {
 
     /// Loads a state (IR = `prefetch[0]`, IRC = `prefetch[1]`) and returns to an instruction boundary.
     pub fn load_state(&mut self, s: &CpuState) {
+        self.stopped = false;
         self.regs = Regs {
             d: s.d,
             a: s.a,
@@ -314,10 +344,7 @@ impl Cpu {
             return None;
         }
         if self.at_instruction_boundary() {
-            let ipl = bus.ipl();
-            if !self.take_interrupt(ipl) {
-                self.begin_instruction();
-            }
+            self.start_next(bus);
             if self.at_instruction_boundary() {
                 return None;
             }
@@ -606,10 +633,10 @@ mod tests {
     fn e05_05_illegal_no_advance() {
         let mut cpu = with_ir(0x0AFC); // EORI with size 11: illegal on the 68000
         let mut bus = Probe::default();
-        assert_eq!(cpu.step(&mut bus), 0);
+        // Illegal instruction: vector 4, 34-clock exception sequence.
+        assert_eq!(cpu.step(&mut bus), 34);
         assert!(cpu.at_instruction_boundary());
-        assert_eq!(cpu.regs.pc, 0x404);
-        assert_eq!(bus.ticks, 0);
+        assert_eq!(cpu.lat.vec, 4);
     }
 
     #[test]

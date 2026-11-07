@@ -79,6 +79,7 @@ pub mod i_swap;
 pub mod i_tas;
 pub mod i_tst;
 pub mod i_unlink;
+pub mod i_system;
 // @mods
 pub mod i_nop;
 
@@ -153,6 +154,7 @@ const GROUPS: &[&[Rule]] = &[
     i_movetousp::RULES,
     i_movefromusp::RULES,
     i_tas::RULES,
+    i_system::RULES,
     // @groups
 ];
 
@@ -227,6 +229,7 @@ const GROUPS: &[&[Rule]] = &[
     i_movetousp::RULES,
     i_movefromusp::RULES,
     i_tas::RULES,
+    i_system::RULES,
     // @tgroups
     testing::RULES,
 ];
@@ -343,6 +346,7 @@ pub(crate) fn plan_for(id: InsnId, variant: u8, cpu: &mut Cpu) -> Plan {
         i_movetousp::ID => i_movetousp::plan(variant, cpu),
         i_movefromusp::ID => i_movefromusp::plan(variant, cpu),
         i_tas::ID => i_tas::plan(variant, cpu),
+        i_system::ID => i_system::plan(variant, cpu),
         // @plans
         #[cfg(test)]
         testing::ID => testing::plan(variant),
@@ -422,6 +426,7 @@ pub(crate) fn run_hook(id: InsnId, k: u8, cpu: &mut Cpu) {
         i_movetousp::ID => i_movetousp::hook(k, cpu),
         i_movefromusp::ID => i_movefromusp::hook(k, cpu),
         i_tas::ID => i_tas::hook(k, cpu),
+        i_system::ID => i_system::hook(k, cpu),
         // @hooks
         #[cfg(test)]
         testing::ID => testing::hook(k, cpu),

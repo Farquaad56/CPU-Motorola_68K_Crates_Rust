@@ -2731,6 +2731,75 @@ pub fn move_sr_hook(to_sr: bool, k: u8, cpu: &mut Cpu) {
     }
 }
 
+/// Hook: CHK comparison (Dn against the bound); a trap replaces the rest of the plan.
+pub const HK_CHK: u8 = 0x98;
+
+const fn build_chk(f: usize) -> Entry {
+    let mut e = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    if f >= 2 {
+        e = push_all(e, ea_read_plan(src_ea(f), Size::Word));
+    }
+    e = push(e, Tok::H(HK_CHK));
+    e = push(e, Tok::N(6));
+    push(e, Tok::Pf)
+}
+
+const fn build_chk_plans() -> [Entry; SRC_FORMS] {
+    let empty = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    let mut out = [empty; SRC_FORMS];
+    let mut f = 0;
+    while f < SRC_FORMS {
+        out[f] = build_chk(f);
+        f += 1;
+    }
+    out
+}
+
+static CHK_PLANS: [Entry; SRC_FORMS] = build_chk_plans();
+
+/// Plan of `CHK <ea>,Dn` without a trap: operand read, `nn n`, `np`.
+pub fn chk_plan(cpu: &Cpu) -> Plan {
+    let e = &CHK_PLANS[src_form(cpu.lat.ird)];
+    &e.toks[..e.n]
+}
+
+/// Hook dispatcher of `CHK`.
+pub fn chk_hook(k: u8, cpu: &mut Cpu) {
+    let ird = cpu.lat.ird;
+    if k == HK_CHK {
+        let bound = if (ird >> 3) & 7 == 0 {
+            cpu.regs.d[(ird & 7) as usize] as u16
+        } else {
+            cpu.lat.val as u16
+        } as i16;
+        let dn = cpu.regs.d[((ird >> 9) & 7) as usize] as u16 as i16;
+        let mut sr = cpu.regs.sr & !(N | Z | V | C);
+        if dn == 0 {
+            sr |= Z;
+        }
+        if dn < 0 {
+            sr |= N;
+        }
+        let trap = dn < 0 || dn > bound;
+        cpu.regs.sr = sr;
+        if trap {
+            // 38 clocks when Dn > bound, or when Dn < 0 and ound - Dn overflows; else 40.
+            let fast = dn > bound || (bound as u16).wrapping_sub(dn as u16) & 0x8000 != 0;
+            cpu.start_plan(crate::exception::chk_trap_plan(fast));
+        }
+    } else if crate::exception::is_hook(k) {
+        crate::exception::hook(k, cpu);
+    } else {
+        crate::ea::run_ea_hook(cpu, k, (ird & 7) as u8, Size::Word);
+    }
+}
+
 static MOVE_FROM_SR_REG: [Tok; 3] = [Tok::H(HK_UNARY), Tok::Pf, Tok::N(2)];
 
 /// Plan of `MOVE SR,<ea>`.
