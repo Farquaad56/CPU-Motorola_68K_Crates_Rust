@@ -22,6 +22,8 @@ pub(crate) struct Latch {
     pub(crate) ird: u16,
     /// Scratch word for multi-step instructions (MOVEM: remaining mask and current register).
     pub(crate) aux: u32,
+    /// Second scratch word (ADDX/SUBX: low half of a long read low-word first).
+    pub(crate) aux2: u32,
 }
 
 /// What the engine does at its next clock.

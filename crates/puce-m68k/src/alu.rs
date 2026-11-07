@@ -155,7 +155,7 @@ pub fn binop_exec(op: Alu, cpu: &mut Cpu) {
     }
 }
 
-const MAXT: usize = 16;
+const MAXT: usize = 24;
 
 #[derive(Clone, Copy)]
 struct Entry {
@@ -700,6 +700,325 @@ pub const fn arith_rules(line: u16, imm: u16, quick: u16, id: InsnId) -> [Rule; 
                 k += 1;
             }
             f += 1;
+        }
+        s += 1;
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------------------------
+// Address register operations (`ADDA` / `SUBA`) and extended operations (`ADDX` / `SUBX`).
+// ---------------------------------------------------------------------------------------------
+
+/// Hook of the `ADDA` / `SUBA` plans.
+pub const HK_ADDA: u8 = 0x85;
+/// Hook of the `ADDX` / `SUBX` plans.
+pub const HK_XOP: u8 = 0x86;
+/// Hook keeping the word just read (low half of a long read low-word first) in `aux2`.
+pub const HK_LO: u8 = 0x87;
+/// Hook joining the high word just read with `aux2` into `aux` (source operand).
+pub const HK_JOIN_SRC: u8 = 0x88;
+/// Hook joining the high word just read with `aux2` into `val` (destination operand).
+pub const HK_JOIN_DST: u8 = 0x89;
+
+/// Semantics of [`HK_ADDA`]: `An = An +/- sign-extended source`; no flags.
+pub fn adda_exec(op: Alu, cpu: &mut Cpu) {
+    let ird = cpu.lat.ird;
+    let reg = (ird & 7) as u8;
+    let src = match (ird >> 3) & 7 {
+        0 => cpu.regs.d[reg as usize],
+        1 => cpu.regs.an(reg),
+        _ => cpu.lat.val,
+    };
+    let src = if ird & 0x100 == 0 {
+        src as u16 as i16 as i32 as u32
+    } else {
+        src
+    };
+    let an = ((ird >> 9) & 7) as u8;
+    let a = cpu.regs.an(an);
+    let r = if op == Alu::Add {
+        a.wrapping_add(src)
+    } else {
+        a.wrapping_sub(src)
+    };
+    cpu.regs.set_an(an, r);
+}
+
+/// Semantics of [`HK_XOP`]: `dst +/- src +/- X`; Z is only cleared, never set.
+pub fn x_exec(op: Alu, cpu: &mut Cpu) {
+    let ird = cpu.lat.ird;
+    let size = size_of_ird(ird);
+    let regs_only = ird & 8 == 0;
+    let (src, dst) = if regs_only {
+        (
+            cpu.regs.d[(ird & 7) as usize],
+            cpu.regs.d[((ird >> 9) & 7) as usize],
+        )
+    } else {
+        (cpu.lat.aux, cpu.lat.val)
+    };
+    let x = u32::from(cpu.regs.sr & X != 0);
+    let (r, c, v) = if op == Alu::Add {
+        add_flags(size, src, dst, x)
+    } else {
+        sub_flags(size, src, dst, x)
+    };
+    let mut sr = cpu.regs.sr & !(X | N | V | C);
+    if r & size_msb(size) != 0 {
+        sr |= N;
+    }
+    if v {
+        sr |= V;
+    }
+    if c {
+        sr |= C | X;
+    }
+    if r & size_mask(size) != 0 {
+        sr &= !Z;
+    }
+    cpu.regs.sr = sr;
+    if regs_only {
+        set_dn(cpu, ((ird >> 9) & 7) as usize, size, r);
+    } else {
+        cpu.lat.val = r;
+    }
+}
+
+const fn build_adda(s: usize, f: usize) -> Entry {
+    let size = if s == 0 { Size::Word } else { Size::Long };
+    let mut e = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    if f >= 2 {
+        e = push_all(e, ea_read_plan(src_ea(f), size));
+    }
+    e = push(e, Tok::H(HK_ADDA));
+    e = push(e, Tok::Pf);
+    // word: always `np nn`; long: memory `np n`, register and immediate `np nn`
+    push(e, Tok::N(if s == 1 && f >= 2 && f != 11 { 2 } else { 4 }))
+}
+
+const N_ADDA: usize = 2 * SRC_FORMS;
+
+const fn build_adda_plans() -> [Entry; N_ADDA] {
+    let empty = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    let mut out = [empty; N_ADDA];
+    let mut s = 0;
+    while s < 2 {
+        let mut f = 0;
+        while f < SRC_FORMS {
+            out[s * SRC_FORMS + f] = build_adda(s, f);
+            f += 1;
+        }
+        s += 1;
+    }
+    out
+}
+
+static ADDA_PLANS: [Entry; N_ADDA] = build_adda_plans();
+
+/// Plan of `ADDA` / `SUBA` (opcode in the `ird` latch of `cpu`).
+pub fn adda_plan(cpu: &Cpu) -> Plan {
+    let ird = cpu.lat.ird;
+    let s = usize::from(ird & 0x100 != 0);
+    let e = &ADDA_PLANS[s * SRC_FORMS + src_form(ird)];
+    &e.toks[..e.n]
+}
+
+/// Number of rules of `ADDA` / `SUBA`.
+pub const N_RULES_ADDA: usize = 2 * SRC_FORMS;
+
+/// Decoding rules of `ADDA` (`line` 0xD000) or `SUBA` (0x9000).
+pub const fn adda_rules(line: u16, id: InsnId) -> [Rule; N_RULES_ADDA] {
+    let mut out = [Rule {
+        mask: 0,
+        value: 0,
+        id: InsnId::ILLEGAL,
+        variant: 0,
+    }; N_RULES_ADDA];
+    let mut k = 0;
+    let mut s = 0;
+    while s < 2 {
+        let mut f = 0;
+        while f < SRC_FORMS {
+            let (m, v): (u16, u16) = match f {
+                0 => (0x38, 0),
+                1 => (0x38, 1 << 3),
+                2 => (0x38, 2 << 3),
+                3 => (0x38, 3 << 3),
+                4 => (0x38, 4 << 3),
+                5 => (0x38, 5 << 3),
+                6 => (0x38, 6 << 3),
+                7 => (0x3F, 0x38),
+                8 => (0x3F, 0x39),
+                9 => (0x3F, 0x3A),
+                10 => (0x3F, 0x3B),
+                _ => (0x3F, 0x3C),
+            };
+            let opmode: u16 = if s == 0 { 3 } else { 7 };
+            out[k] = Rule {
+                mask: 0xF1C0 | m,
+                value: line | (opmode << 6) | v,
+                id,
+                variant: s as u8,
+            };
+            k += 1;
+            f += 1;
+        }
+        s += 1;
+    }
+    out
+}
+
+/// Marks a hook as acting on the destination register field (bits 11-9) instead of bits 2-0.
+pub const DST_FLAG: u8 = 0x40;
+
+const fn push_x_read(mut e: Entry, s: usize, dst: bool) -> Entry {
+    let flag = if dst { DST_FLAG } else { 0 };
+    e = push(e, Tok::H(crate::ea::HK_AN_PREDEC | flag));
+    if !dst {
+        e = push(e, Tok::N(2));
+    }
+    match s {
+        0 => push(e, Tok::Rb(AddrSrc::Ea)),
+        1 => push(e, Tok::Rw(AddrSrc::Ea)),
+        _ => {
+            // a long is read low word first (SST)
+            e = push(e, Tok::Rw(AddrSrc::EaPlus2));
+            e = push(e, Tok::H(HK_LO));
+            e = push(e, Tok::Rw(AddrSrc::Ea));
+            push(e, Tok::H(if dst { HK_JOIN_DST } else { HK_JOIN_SRC }))
+        }
+    }
+}
+
+const fn build_x(s: usize, mem: bool) -> Entry {
+    let mut e = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    if !mem {
+        e = push(e, Tok::H(HK_XOP));
+        e = push(e, Tok::Pf);
+        if s == 2 {
+            e = push(e, Tok::N(4));
+        }
+        return e;
+    }
+    e = push_x_read(e, s, false);
+    if s < 2 {
+        e = push(e, Tok::H(HK_SAVE));
+    }
+    e = push_x_read(e, s, true);
+    e = push(e, Tok::H(HK_XOP));
+    match s {
+        0 => {
+            e = push(e, Tok::Pf);
+            push(e, Tok::Wb(AddrSrc::Ea))
+        }
+        1 => {
+            e = push(e, Tok::Pf);
+            push(e, Tok::Ww(AddrSrc::Ea))
+        }
+        _ => {
+            e = push(e, Tok::Ww(AddrSrc::EaPlus2));
+            e = push(e, Tok::Pf);
+            e = push(e, Tok::H(HK_SHIFT16));
+            push(e, Tok::Ww(AddrSrc::Ea))
+        }
+    }
+}
+
+const fn build_x_plans() -> [Entry; 6] {
+    let empty = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    let mut out = [empty; 6];
+    let mut s = 0;
+    while s < 3 {
+        out[s * 2] = build_x(s, false);
+        out[s * 2 + 1] = build_x(s, true);
+        s += 1;
+    }
+    out
+}
+
+static X_PLANS: [Entry; 6] = build_x_plans();
+
+/// Plan of `ADDX` / `SUBX` (opcode in the `ird` latch of `cpu`).
+pub fn x_plan(cpu: &Cpu) -> Plan {
+    let ird = cpu.lat.ird;
+    let e = &X_PLANS[size_index(ird) * 2 + usize::from(ird & 8 != 0)];
+    &e.toks[..e.n]
+}
+
+/// Hook dispatcher of `ADDX` / `SUBX`.
+pub fn x_hook(op: Alu, k: u8, cpu: &mut Cpu) {
+    match k {
+        HK_XOP => x_exec(op, cpu),
+        HK_SAVE => cpu.lat.aux = cpu.lat.val,
+        HK_LO => cpu.lat.aux2 = cpu.lat.val & 0xFFFF,
+        HK_JOIN_SRC => cpu.lat.aux = (cpu.lat.val << 16) | cpu.lat.aux2,
+        HK_JOIN_DST => cpu.lat.val = (cpu.lat.val << 16) | cpu.lat.aux2,
+        HK_SHIFT16 => cpu.lat.val >>= 16,
+        _ => {
+            let ird = cpu.lat.ird;
+            let size = size_of_ird(ird);
+            if k & DST_FLAG != 0 {
+                crate::ea::run_ea_hook(cpu, k & !DST_FLAG, ((ird >> 9) & 7) as u8, size);
+            } else {
+                crate::ea::run_ea_hook(cpu, k, (ird & 7) as u8, size);
+            }
+        }
+    }
+}
+
+/// Hook dispatcher of `ADDA` / `SUBA`.
+pub fn adda_hook(op: Alu, k: u8, cpu: &mut Cpu) {
+    if k == HK_ADDA {
+        adda_exec(op, cpu);
+    } else {
+        let ird = cpu.lat.ird;
+        let size = if ird & 0x100 == 0 {
+            Size::Word
+        } else {
+            Size::Long
+        };
+        crate::ea::run_ea_hook(cpu, k, (ird & 7) as u8, size);
+    }
+}
+
+/// Number of rules of `ADDX` / `SUBX`.
+pub const N_RULES_X: usize = 6;
+
+/// Decoding rules of `ADDX` (`line` 0xD000) or `SUBX` (0x9000): `line | Dx << 9 | 1 << 8 |
+/// size << 6 | m << 3 | Dy`.
+pub const fn x_rules(line: u16, id: InsnId) -> [Rule; N_RULES_X] {
+    let mut out = [Rule {
+        mask: 0,
+        value: 0,
+        id: InsnId::ILLEGAL,
+        variant: 0,
+    }; N_RULES_X];
+    let mut k = 0;
+    let mut s = 0;
+    while s < 3 {
+        let mut m = 0;
+        while m < 2 {
+            out[k] = Rule {
+                mask: 0xF1F8,
+                value: line | 0x100 | ((s as u16) << 6) | ((m as u16) << 3),
+                id,
+                variant: m as u8,
+            };
+            k += 1;
+            m += 1;
         }
         s += 1;
     }
