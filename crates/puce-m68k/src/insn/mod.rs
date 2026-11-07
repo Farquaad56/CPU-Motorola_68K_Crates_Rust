@@ -12,15 +12,16 @@ use crate::cpu::Cpu;
 use crate::decode::{InsnId, Rule};
 use crate::engine::plan::Plan;
 
+pub mod i_move;
 pub mod i_nop;
 
 /// Rule groups of the instruction modules.
 #[cfg(not(test))]
-const GROUPS: &[&[Rule]] = &[i_nop::RULES];
+const GROUPS: &[&[Rule]] = &[i_nop::RULES, i_move::RULES];
 
 /// Rule groups in unit tests: the instructions plus the test instructions of [`testing`].
 #[cfg(test)]
-const GROUPS: &[&[Rule]] = &[i_nop::RULES, testing::RULES];
+const GROUPS: &[&[Rule]] = &[i_nop::RULES, i_move::RULES, testing::RULES];
 
 const fn total(groups: &[&[Rule]]) -> usize {
     let mut n = 0;
@@ -67,6 +68,7 @@ pub static RULES: &[Rule] = &ALL;
 pub(crate) fn plan_for(id: InsnId, variant: u8, cpu: &mut Cpu) -> Plan {
     match id {
         i_nop::ID => i_nop::plan(variant),
+        i_move::ID => i_move::plan(variant, cpu),
         #[cfg(test)]
         testing::ID => testing::plan(variant),
         _ => &[],
@@ -78,6 +80,7 @@ pub(crate) fn plan_for(id: InsnId, variant: u8, cpu: &mut Cpu) -> Plan {
 pub(crate) fn run_hook(id: InsnId, k: u8, cpu: &mut Cpu) {
     match id {
         i_nop::ID => i_nop::hook(k, cpu),
+        i_move::ID => i_move::hook(k, cpu),
         #[cfg(test)]
         testing::ID => testing::hook(k, cpu),
         _ => {}
