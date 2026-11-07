@@ -4,6 +4,7 @@
 
 pub mod flat;
 pub mod session;
+pub mod snapshot;
 pub mod ssc;
 
 /// Crate version.
