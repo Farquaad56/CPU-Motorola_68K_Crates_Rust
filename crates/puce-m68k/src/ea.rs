@@ -4,6 +4,7 @@
 //! (data, memory, control, alterable) say which modes an instruction accepts; they
 //! are used to write its decoding rules. Modes 7/5..7/7 do not exist.
 
+use crate::cpu::Cpu;
 use crate::engine::plan::{AddrSrc, Plan, Tok};
 
 /// The 12 addressing modes.
@@ -198,6 +199,73 @@ pub const HK_IMM_L_HI: u8 = 0x0C;
 /// Hook: immediate operand |= extension word (second word of a long immediate).
 pub const HK_IMM_L_LO: u8 = 0x0D;
 
+/// Executes an effective-address hook (`HK_EA_*`, `HK_AN_*`, `HK_IMM_*`) of a plan built from
+/// [`ea_read_plan`] / [`ea_write_plan`]. `reg` is the register field of the operand (An for the
+/// address modes), `size` the operand size. Returns false when `k` is not an EA hook.
+///
+/// The extension word is `regs.irc`: hooks that read it run before the `Pf` that consumes it.
+/// The PC-relative base is the address of the extension word (`PC - 2`, PC being the address of
+/// the next word to prefetch).
+#[allow(dead_code)] // first user: MOVE (E06-02)
+pub(crate) fn run_ea_hook(cpu: &mut Cpu, k: u8, reg: u8, size: Size) -> bool {
+    let step = match size {
+        Size::Byte if reg & 7 == 7 => 2,
+        Size::Byte => 1,
+        Size::Word => 2,
+        Size::Long => 4,
+    };
+    let ext = cpu.regs.irc;
+    let sext = ext as i16 as i32 as u32;
+    match k {
+        HK_EA_AN => cpu.lat.ea = cpu.regs.an(reg),
+        HK_AN_PREDEC => {
+            let v = cpu.regs.an(reg).wrapping_sub(step);
+            cpu.regs.set_an(reg, v);
+            cpu.lat.ea = v;
+        }
+        HK_AN_POSTINC => {
+            let v = cpu.regs.an(reg).wrapping_add(step);
+            cpu.regs.set_an(reg, v);
+        }
+        HK_EA_DISP => cpu.lat.ea = cpu.regs.an(reg).wrapping_add(sext),
+        HK_EA_INDEX => cpu.lat.ea = index_ea(cpu, cpu.regs.an(reg)),
+        HK_EA_ABSW => cpu.lat.ea = sext,
+        HK_EA_ABSL_HI => cpu.lat.ea = (ext as u32) << 16,
+        HK_EA_ABSL_LO => cpu.lat.ea |= ext as u32,
+        HK_EA_PCDISP => cpu.lat.ea = cpu.regs.pc.wrapping_sub(2).wrapping_add(sext),
+        HK_EA_PCINDEX => cpu.lat.ea = index_ea(cpu, cpu.regs.pc.wrapping_sub(2)),
+        HK_IMM_W => {
+            cpu.lat.val = match size {
+                Size::Byte => (ext & 0xFF) as u32,
+                _ => ext as u32,
+            }
+        }
+        HK_IMM_L_HI => cpu.lat.val = (ext as u32) << 16,
+        HK_IMM_L_LO => cpu.lat.val |= ext as u32,
+        _ => return false,
+    }
+    true
+}
+
+/// `base + d8 + Xn` from the brief extension word in IRC (bit 15: An/Dn, bits 14-12: register,
+/// bit 11: long/word index, bits 7-0: displacement).
+fn index_ea(cpu: &Cpu, base: u32) -> u32 {
+    let ext = cpu.regs.irc;
+    let r = ((ext >> 12) & 7) as u8;
+    let xn = if ext & 0x8000 != 0 {
+        cpu.regs.an(r)
+    } else {
+        cpu.regs.d[r as usize]
+    };
+    let xn = if ext & 0x0800 != 0 {
+        xn
+    } else {
+        xn as u16 as i16 as i32 as u32
+    };
+    let d8 = ext as u8 as i8 as i32 as u32;
+    base.wrapping_add(d8).wrapping_add(xn)
+}
+
 /// Number of extension words (0, 1 or 2) that follow the opcode for this mode and size.
 pub const fn ea_ext_words(ea: Ea, size: Size) -> u8 {
     match ea {
@@ -258,7 +326,7 @@ macro_rules! ea_plans {
 /// word is a `Pf` (4 clocks). A hook that reads the extension word is placed BEFORE the `Pf` that
 /// consumes it (`Cpu::ext_word` is IRC until that `Pf`). The A7 byte rule (step 2 instead of 1)
 /// lives in the hooks, not here. `Dn`/`An` return an empty plan.
-pub fn ea_read_plan(ea: Ea, size: Size) -> Plan {
+pub const fn ea_read_plan(ea: Ea, size: Size) -> Plan {
     if let Ea::Imm = ea {
         return match size {
             Size::Long => &[Tok::H(HK_IMM_L_HI), Tok::Pf, Tok::H(HK_IMM_L_LO), Tok::Pf],
@@ -270,7 +338,7 @@ pub fn ea_read_plan(ea: Ea, size: Size) -> Plan {
 
 /// Micro-cycle plan that stores an operand at `ea`: same address phase as [`ea_read_plan`],
 /// with a write token (`Wb`/`Ww`/`Wl`) in place of the read. Immediate is not alterable: empty.
-pub fn ea_write_plan(ea: Ea, size: Size) -> Plan {
+pub const fn ea_write_plan(ea: Ea, size: Size) -> Plan {
     ea_plans!(ea, size, Wb, Ww, Wl)
 }
 

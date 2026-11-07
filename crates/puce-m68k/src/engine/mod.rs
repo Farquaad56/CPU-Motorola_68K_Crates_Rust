@@ -11,6 +11,17 @@ use plan::{AddrSrc, Plan, Tok};
 #[cfg(feature = "inspect")]
 use crate::probe::{BusEvent, Journal};
 
+/// Internal latches shared by the engine and the instruction hooks (not architectural state).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Latch {
+    /// Effective address resolved by the hooks (`AddrSrc::Ea`, `EaPlus2` and the hook-managed sources).
+    pub(crate) ea: u32,
+    /// Operand latch: loaded by the read tokens, stored by the write tokens.
+    pub(crate) val: u32,
+    /// Opcode of the instruction being executed (IR moves on with every prefetch).
+    pub(crate) ird: u16,
+}
+
 /// What the engine does at its next clock.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Cur {
@@ -154,7 +165,7 @@ impl Engine {
     }
 
     /// Describes the next clock, or `None` when the plan is finished.
-    pub(crate) fn current(&self, regs: &Regs) -> Option<Cur> {
+    pub(crate) fn current(&self, regs: &Regs, lat: &Latch) -> Option<Cur> {
         let supervisor = regs.sr & S != 0;
         let fc_data = if supervisor { 5 } else { 1 };
         let fc_prog = if supervisor { 6 } else { 2 };
@@ -182,12 +193,15 @@ impl Engine {
             Tok::Wl(a) => (BusKind::Write, 8, a, fc_data, false),
             Tok::Tas(a) => (BusKind::Read, 4, a, fc_data, true),
         };
-        // Addresses are resolved in E05; until then every source maps to PC (+2 for the
-        // second word of a long access).
+        // `Ea`, `EaPlus2` and the sources managed by hooks (pre/post-increment, vectors) use
+        // the effective address latch. The second word of a long access is 2 bytes further.
         let base = match src {
             AddrSrc::Pc => regs.pc,
-            AddrSrc::EaPlus2 => regs.pc.wrapping_add(2),
-            _ => regs.pc,
+            AddrSrc::Ea => lat.ea,
+            AddrSrc::EaPlus2 => lat.ea.wrapping_add(2),
+            AddrSrc::An(n) => regs.an(n),
+            AddrSrc::Sp => regs.a7(),
+            _ => lat.ea,
         };
         let addr = base.wrapping_add(if self.clk >= 4 { 2 } else { 0 });
         let (uds, lds) = if byte {
@@ -212,9 +226,9 @@ impl Engine {
     ///
     /// A `Pf` token shifts the prefetch queue at clock 3 of its bus cycle, once DTACK is
     /// acknowledged: `IR = IRC`, `IRC = word read`, `PC += 2`.
-    pub(crate) fn step(&mut self, pins: Pins, regs: &mut Regs) -> Pins {
+    pub(crate) fn step(&mut self, pins: Pins, regs: &mut Regs, lat: &mut Latch) -> Pins {
         self.clocks += 1;
-        let Some(cur) = self.current(regs) else {
+        let Some(cur) = self.current(regs, lat) else {
             let fc = if regs.sr & S != 0 { 5 } else { 1 };
             return idle_pins(fc, self.last_addr);
         };
@@ -232,7 +246,27 @@ impl Engine {
         };
         // DTACK is sampled at clock 2 of every bus cycle: repeat the clock while it is low.
         let wait = cur.clock == 2 && !pins.dtack();
-        let out = bus_pins(kind, cur.clock, cur.addr, cur.fc, cur.uds, cur.lds, 0);
+        let tok = self.plan.get(self.idx).copied();
+        let wdata = match tok {
+            Some(Tok::Wb(_)) => {
+                let b = lat.val as u8 as u16;
+                if cur.addr & 1 != 0 {
+                    b
+                } else {
+                    b << 8
+                }
+            }
+            Some(Tok::Ww(_)) => lat.val as u16,
+            Some(Tok::Wl(_)) => {
+                if self.clk >= 4 {
+                    lat.val as u16
+                } else {
+                    (lat.val >> 16) as u16
+                }
+            }
+            _ => 0,
+        };
+        let out = bus_pins(kind, cur.clock, cur.addr, cur.fc, cur.uds, cur.lds, wdata);
         self.last_addr = cur.addr;
         #[cfg(feature = "inspect")]
         {
@@ -258,10 +292,27 @@ impl Engine {
             }
         }
         if !wait {
-            if cur.clock == 3 && matches!(self.plan.get(self.idx), Some(Tok::Pf)) {
-                regs.ir = regs.irc;
-                regs.irc = pins.data();
-                regs.pc = regs.pc.wrapping_add(2);
+            if cur.clock == 3 {
+                let d = pins.data();
+                match tok {
+                    Some(Tok::Pf) => {
+                        regs.ir = regs.irc;
+                        regs.irc = d;
+                        regs.pc = regs.pc.wrapping_add(2);
+                    }
+                    Some(Tok::Rb(_)) | Some(Tok::Tas(_)) => {
+                        lat.val = if cur.addr & 1 != 0 { d & 0xFF } else { d >> 8 } as u32;
+                    }
+                    Some(Tok::Rw(_)) => lat.val = d as u32,
+                    Some(Tok::Rl(_)) => {
+                        lat.val = if self.clk >= 4 {
+                            (lat.val & 0xFFFF_0000) | d as u32
+                        } else {
+                            (d as u32) << 16
+                        };
+                    }
+                    _ => {}
+                }
             }
             self.clk += 1;
             if self.clk >= cur.len {

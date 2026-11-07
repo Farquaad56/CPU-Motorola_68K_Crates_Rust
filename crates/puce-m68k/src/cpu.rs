@@ -3,7 +3,7 @@
 use crate::bus::Bus;
 use crate::decode::{decode, Decoded, InsnId};
 use crate::engine::plan::Plan;
-use crate::engine::Engine;
+use crate::engine::{Engine, Latch};
 use crate::insn;
 use crate::pins::Pins;
 #[cfg(feature = "inspect")]
@@ -17,6 +17,8 @@ pub struct Cpu {
     /// Architectural registers.
     pub regs: Regs,
     engine: Engine,
+    /// Internal latches (effective address, operand, opcode) used by the hooks.
+    pub(crate) lat: Latch,
     /// Instruction being executed (owner of the hooks of the running plan).
     cur: Decoded,
     /// Wait clocks still to insert in the current bus cycle (`tick_bus` only).
@@ -44,6 +46,11 @@ impl Cpu {
                 irc: 0,
             },
             engine: Engine::new(),
+            lat: Latch {
+                ea: 0,
+                val: 0,
+                ird: 0,
+            },
             cur: Decoded {
                 id: InsnId::ILLEGAL,
                 variant: 0,
@@ -73,6 +80,7 @@ impl Cpu {
     /// event is not journaled either (the journal has no kind for it).
     fn begin_instruction(&mut self) {
         self.cur = decode(self.regs.ir);
+        self.lat.ird = self.regs.ir;
         if self.cur.id == InsnId::ILLEGAL {
             self.engine.start(&[]);
             return;
@@ -96,7 +104,7 @@ impl Cpu {
 
     /// Advances one clock. `pins` carries the inputs (DTACK, DATA), the result the outputs.
     pub fn tick(&mut self, pins: Pins) -> Pins {
-        let out = self.engine.step(pins, &mut self.regs);
+        let out = self.engine.step(pins, &mut self.regs, &mut self.lat);
         self.run_hooks();
         out
     }
@@ -158,7 +166,10 @@ impl Cpu {
     /// of the cycle), `Bus::write` at the clock where the data is valid (clock 2, once DTACK is
     /// acknowledged). `Bus::on_tick` receives the output pins of every clock.
     pub fn tick_bus<B: Bus>(&mut self, bus: &mut B) {
-        let cur = self.engine.current(&self.regs).filter(|c| c.kind.is_some());
+        let cur = self
+            .engine
+            .current(&self.regs, &self.lat)
+            .filter(|c| c.kind.is_some());
         let mut pins = Pins(0);
         let mut dtack = true;
         if let Some(c) = cur {
@@ -337,6 +348,7 @@ mod tests {
         let mut cpu = Cpu::new();
         cpu.load_state(&sample_state());
         cpu.regs.sr = 0; // user mode: data FC = 1
+        cpu.lat.ea = 0x404;
         cpu.start_plan(&[Tok::Rw(AddrSrc::Ea)]);
         let mut bus = Probe::default();
         cpu.step_clocks(&mut bus, 4);
@@ -523,5 +535,61 @@ mod tests {
         assert_eq!(cpu.step(&mut bus), 2 + 6 + 6);
         let mut cpu = with_ir(crate::insn::testing::OP_CLOCKS);
         assert_eq!(cpu.step(&mut Probe::default()), 10);
+    }
+
+    /// Bus that records writes and answers reads with a fixed word.
+    #[test]
+    fn d035_read_latches_operand() {
+        let mut cpu = Cpu::new();
+        cpu.load_state(&sample_state());
+        cpu.lat.ea = 0x1000;
+        // word, long (two words), byte on an even and on an odd address
+        cpu.start_plan(&[Tok::Rw(AddrSrc::Ea)]);
+        while !cpu.at_instruction_boundary() {
+            cpu.tick_bus(&mut Probe::default());
+        }
+        assert_eq!(cpu.lat.val, 0xCAFE);
+        cpu.start_plan(&[Tok::Rl(AddrSrc::Ea)]);
+        while !cpu.at_instruction_boundary() {
+            cpu.tick_bus(&mut Probe::default());
+        }
+        assert_eq!(cpu.lat.val, 0xCAFE_CAFE);
+        cpu.start_plan(&[Tok::Rb(AddrSrc::Ea)]);
+        while !cpu.at_instruction_boundary() {
+            cpu.tick_bus(&mut Probe::default());
+        }
+        assert_eq!(cpu.lat.val, 0xCA);
+        cpu.lat.ea = 0x1001;
+        cpu.start_plan(&[Tok::Rb(AddrSrc::Ea)]);
+        while !cpu.at_instruction_boundary() {
+            cpu.tick_bus(&mut Probe::default());
+        }
+        assert_eq!(cpu.lat.val, 0xFE);
+    }
+
+    #[test]
+    fn d035_write_data_and_addresses() {
+        let mut cpu = Cpu::new();
+        cpu.load_state(&sample_state());
+        cpu.lat.ea = 0x2000;
+        cpu.lat.val = 0x1122_3344;
+        let mut bus = Probe::default();
+        cpu.start_plan(&[
+            Tok::Wl(AddrSrc::Ea),
+            Tok::Ww(AddrSrc::EaPlus2),
+            Tok::Wb(AddrSrc::Ea),
+        ]);
+        while !cpu.at_instruction_boundary() {
+            cpu.tick_bus(&mut bus);
+        }
+        assert_eq!(
+            bus.writes,
+            std::vec![
+                (0x2000, 5, true, true, 0x1122),
+                (0x2002, 5, true, true, 0x3344),
+                (0x2002, 5, true, true, 0x3344),
+                (0x2000, 5, true, false, 0x4400),
+            ]
+        );
     }
 }

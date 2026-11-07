@@ -100,6 +100,7 @@ mod tests {
     fn run(plan: Plan, waits: u8) -> Cpu {
         let mut cpu = Cpu::new();
         cpu.regs.pc = 0x404;
+        cpu.lat.ea = 0x404;
         cpu.start_plan(plan);
         let mut bus = B { waits };
         let mut n = 0;
