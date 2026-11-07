@@ -14,6 +14,7 @@ use crate::engine::plan::Plan;
 
 pub mod i_move;
 pub mod i_movea;
+pub mod i_moveq;
 // @mods
 pub mod i_nop;
 
@@ -22,7 +23,9 @@ pub mod i_nop;
 const GROUPS: &[&[Rule]] = &[
     i_nop::RULES,
     i_move::RULES,
-    i_movea::RULES, /* @groups */
+    i_movea::RULES,
+    i_moveq::RULES,
+    // @groups
 ];
 
 /// Rule groups in unit tests: the instructions plus the test instructions of [`testing`].
@@ -30,7 +33,9 @@ const GROUPS: &[&[Rule]] = &[
 const GROUPS: &[&[Rule]] = &[
     i_nop::RULES,
     i_move::RULES,
-    i_movea::RULES, /* @tgroups */
+    i_movea::RULES,
+    i_moveq::RULES,
+    // @tgroups
     testing::RULES,
 ];
 
@@ -81,6 +86,7 @@ pub(crate) fn plan_for(id: InsnId, variant: u8, cpu: &mut Cpu) -> Plan {
         i_nop::ID => i_nop::plan(variant),
         i_move::ID => i_move::plan(variant, cpu),
         i_movea::ID => i_movea::plan(variant, cpu),
+        i_moveq::ID => i_moveq::plan(variant),
         // @plans
         #[cfg(test)]
         testing::ID => testing::plan(variant),
@@ -95,6 +101,7 @@ pub(crate) fn run_hook(id: InsnId, k: u8, cpu: &mut Cpu) {
         i_nop::ID => i_nop::hook(k, cpu),
         i_move::ID => i_move::hook(k, cpu),
         i_movea::ID => i_movea::hook(k, cpu),
+        i_moveq::ID => i_moveq::hook(k, cpu),
         // @hooks
         #[cfg(test)]
         testing::ID => testing::hook(k, cpu),
