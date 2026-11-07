@@ -3,6 +3,11 @@
 
 mod args;
 mod http;
+mod ws;
+
+use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -13,15 +18,21 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let server = match http::bind(a.port) {
+    let listener = match http::bind(a.port) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("m68k-web: {e}");
             std::process::exit(1);
         }
     };
-    let addr = http::local_addr(&server)
+    let addr = http::local_addr(&listener)
         .map_or_else(|| format!("127.0.0.1:{}", a.port), |s| s.to_string());
     println!("m68k-web: http://{addr} (roms {})", a.roms_dir.display());
-    http::serve(&server, &std::sync::atomic::AtomicBool::new(false));
+    let stop = Arc::new(AtomicBool::new(false));
+    let handler = ws::handler(
+        a.roms_dir.clone(),
+        PathBuf::from("tests/singlestep"),
+        Arc::clone(&stop),
+    );
+    http::serve(&listener, &stop, &handler);
 }

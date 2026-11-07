@@ -15,4 +15,5 @@ path = "src/main.rs"
 [dependencies]
 puce-m68k = { path = "../puce-m68k", features = ["inspect", "disasm", "std"] }
 puce-m68k-machines = { path = "../puce-m68k-machines" }
-tiny_http = "0.12"
+tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
+base64 = "0.22"
