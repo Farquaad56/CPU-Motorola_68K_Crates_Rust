@@ -18,6 +18,10 @@ pub mod i_addx;
 pub mod i_and;
 pub mod i_asl;
 pub mod i_asr;
+pub mod i_bchg;
+pub mod i_bclr;
+pub mod i_bset;
+pub mod i_btst;
 pub mod i_clr;
 pub mod i_cmp;
 pub mod i_cmpa;
@@ -99,6 +103,10 @@ const GROUPS: &[&[Rule]] = &[
     i_ror::RULES,
     i_roxl::RULES,
     i_roxr::RULES,
+    i_btst::RULES,
+    i_bset::RULES,
+    i_bclr::RULES,
+    i_bchg::RULES,
     // @groups
 ];
 
@@ -146,6 +154,10 @@ const GROUPS: &[&[Rule]] = &[
     i_ror::RULES,
     i_roxl::RULES,
     i_roxr::RULES,
+    i_btst::RULES,
+    i_bset::RULES,
+    i_bclr::RULES,
+    i_bchg::RULES,
     // @tgroups
     testing::RULES,
 ];
@@ -235,6 +247,10 @@ pub(crate) fn plan_for(id: InsnId, variant: u8, cpu: &mut Cpu) -> Plan {
         i_ror::ID => i_ror::plan(variant, cpu),
         i_roxl::ID => i_roxl::plan(variant, cpu),
         i_roxr::ID => i_roxr::plan(variant, cpu),
+        i_btst::ID => i_btst::plan(variant, cpu),
+        i_bset::ID => i_bset::plan(variant, cpu),
+        i_bclr::ID => i_bclr::plan(variant, cpu),
+        i_bchg::ID => i_bchg::plan(variant, cpu),
         // @plans
         #[cfg(test)]
         testing::ID => testing::plan(variant),
@@ -287,6 +303,10 @@ pub(crate) fn run_hook(id: InsnId, k: u8, cpu: &mut Cpu) {
         i_ror::ID => i_ror::hook(k, cpu),
         i_roxl::ID => i_roxl::hook(k, cpu),
         i_roxr::ID => i_roxr::hook(k, cpu),
+        i_btst::ID => i_btst::hook(k, cpu),
+        i_bset::ID => i_bset::hook(k, cpu),
+        i_bclr::ID => i_bclr::hook(k, cpu),
+        i_bchg::ID => i_bchg::hook(k, cpu),
         // @hooks
         #[cfg(test)]
         testing::ID => testing::hook(k, cpu),

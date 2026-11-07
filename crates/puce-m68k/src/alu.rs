@@ -2154,6 +2154,208 @@ pub const fn shift_rules(tt: u16, left: bool, id: InsnId) -> [Rule; N_RULES_SHIF
     out
 }
 
+// ---------------------------------------------------------------------------------------------
+// Bit operations: BTST, BCHG, BCLR, BSET. Timing: docs/specs/instr/BTST.md, BSET.md, BCLR.md.
+// ---------------------------------------------------------------------------------------------
+
+/// Hook of the bit-operation plans.
+pub const HK_BIT: u8 = 0x90;
+
+/// Bit operation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Bit {
+    /// `BTST`: test only.
+    Test,
+    /// `BCHG`: toggle.
+    Chg,
+    /// `BCLR`: clear.
+    Clr,
+    /// `BSET`: set.
+    Set,
+}
+
+/// Semantics of [`HK_BIT`]: Z from the tested bit, new value, idle length of the register forms.
+pub fn bit_exec(op: Bit, cpu: &mut Cpu) {
+    let ird = cpu.lat.ird;
+    let imm = ird & 0x100 == 0;
+    let num = if imm {
+        cpu.lat.aux
+    } else {
+        cpu.regs.d[((ird >> 9) & 7) as usize]
+    };
+    let reg_dst = (ird >> 3) & 7 == 0;
+    let reg = (ird & 7) as usize;
+    let (n, x) = if reg_dst {
+        (num & 31, cpu.regs.d[reg])
+    } else {
+        (num & 7, cpu.lat.val)
+    };
+    let bit = 1u32 << n;
+    if x & bit == 0 {
+        cpu.regs.sr |= Z;
+    } else {
+        cpu.regs.sr &= !Z;
+    }
+    let r = match op {
+        Bit::Test => x,
+        Bit::Chg => x ^ bit,
+        Bit::Clr => x & !bit,
+        Bit::Set => x | bit,
+    };
+    if reg_dst {
+        cpu.regs.d[reg] = r;
+        cpu.lat.idle = match op {
+            Bit::Test => 2,
+            Bit::Chg | Bit::Set => {
+                if n < 16 {
+                    2
+                } else {
+                    4
+                }
+            }
+            Bit::Clr => {
+                if n < 16 {
+                    4
+                } else {
+                    6
+                }
+            }
+        };
+    } else {
+        cpu.lat.val = r;
+    }
+}
+
+const fn build_bit(imm: bool, f: usize, write: bool) -> Entry {
+    let mut e = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    if imm {
+        e = push_all(e, ea_read_plan(Ea::Imm, Size::Byte));
+        e = push(e, Tok::H(HK_SAVE));
+    }
+    if f >= 2 {
+        e = push_all(e, ea_read_plan(src_ea(f), Size::Byte));
+    }
+    e = push(e, Tok::H(HK_BIT));
+    e = push(e, Tok::Pf);
+    if f == 0 {
+        push(e, Tok::Nv)
+    } else if f == 11 && !imm {
+        // `BTST Dn,#<data>`: `np np n`
+        push(e, Tok::N(2))
+    } else if write {
+        push(e, Tok::Wb(AddrSrc::Ea))
+    } else {
+        e
+    }
+}
+
+const fn build_bit_plans(write: bool) -> [Entry; 2 * SRC_FORMS] {
+    let empty = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    let mut out = [empty; 2 * SRC_FORMS];
+    let mut i = 0;
+    while i < 2 {
+        let mut f = 0;
+        while f < SRC_FORMS {
+            out[i * SRC_FORMS + f] = build_bit(i == 1, f, write);
+            f += 1;
+        }
+        i += 1;
+    }
+    out
+}
+
+static BIT_RMW: [Entry; 2 * SRC_FORMS] = build_bit_plans(true);
+static BIT_TST: [Entry; 2 * SRC_FORMS] = build_bit_plans(false);
+
+/// Plan of a bit operation (`test` = true for `BTST`).
+pub fn bit_plan(cpu: &Cpu, test: bool) -> Plan {
+    let ird = cpu.lat.ird;
+    let t = if test { &BIT_TST } else { &BIT_RMW };
+    let i = usize::from(ird & 0x100 == 0);
+    let e = &t[i * SRC_FORMS + src_form(ird)];
+    &e.toks[..e.n]
+}
+
+/// Hook dispatcher of the bit operations.
+pub fn bit_hook(op: Bit, k: u8, cpu: &mut Cpu) {
+    match k {
+        HK_BIT => bit_exec(op, cpu),
+        HK_SAVE => cpu.lat.aux = cpu.lat.val,
+        _ => {
+            let ird = cpu.lat.ird;
+            crate::ea::run_ea_hook(cpu, k, (ird & 7) as u8, Size::Byte);
+        }
+    }
+}
+
+/// Number of rules of `BTST` (data addressing modes) and of the other bit operations.
+pub const N_RULES_BTST: usize = 11 + 10;
+/// Number of rules of `BCHG`, `BCLR`, `BSET` (data-alterable modes).
+pub const N_RULES_BITMOD: usize = 8 + 8;
+
+const fn bit_mode(f: usize) -> (u16, u16) {
+    match f {
+        0 => (0x38, 0),
+        2 => (0x38, 2 << 3),
+        3 => (0x38, 3 << 3),
+        4 => (0x38, 4 << 3),
+        5 => (0x38, 5 << 3),
+        6 => (0x38, 6 << 3),
+        7 => (0x3F, 0x38),
+        8 => (0x3F, 0x39),
+        9 => (0x3F, 0x3A),
+        10 => (0x3F, 0x3B),
+        _ => (0x3F, 0x3C),
+    }
+}
+
+/// Decoding rules of a bit operation (`tt`: 0 BTST, 1 BCHG, 2 BCLR, 3 BSET) for `N` rules.
+pub const fn bit_rules<const N: usize>(tt: u16, id: InsnId) -> [Rule; N] {
+    let btst = tt == 0;
+    let mut out = [Rule {
+        mask: 0,
+        value: 0,
+        id: InsnId::ILLEGAL,
+        variant: 0,
+    }; N];
+    let mut k = 0;
+    let mut form = 0;
+    while form < 2 {
+        let mut f = 0;
+        while f < SRC_FORMS {
+            let ok = f != 1 && (f <= 8 || (btst && (f <= 10 || (f == 11 && form == 0))));
+            if ok {
+                let (m, v) = bit_mode(f);
+                out[k] = if form == 0 {
+                    Rule {
+                        mask: 0xF1C0 | m,
+                        value: 0x0100 | (tt << 6) | v,
+                        id,
+                        variant: 0,
+                    }
+                } else {
+                    Rule {
+                        mask: 0xFFC0 | m,
+                        value: 0x0800 | (tt << 6) | v,
+                        id,
+                        variant: 0,
+                    }
+                };
+                k += 1;
+            }
+            f += 1;
+        }
+        form += 1;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
