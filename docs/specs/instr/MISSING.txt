@@ -1,0 +1,5 @@
+Mnemonics of instructions.tsv without a table in docs/ref/Yacht.txt (nothing was guessed):
+
+
+Tables whose title names no known mnemonic:
+table at line 131 (title '<ea>') names no known mnemonic
