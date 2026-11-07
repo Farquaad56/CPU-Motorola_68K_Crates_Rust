@@ -31,7 +31,7 @@ const BUSLOG_LEN: usize = 32;
 /// Written addresses kept.
 const WLOG_LEN: usize = 64;
 /// Minimum interval between two states during `run`.
-const STATE_INTERVAL: Duration = Duration::from_millis(33);
+const STATE_INTERVAL: Duration = Duration::from_millis(34);
 
 /// A command of the protocol (client to server).
 #[derive(Clone, Debug, PartialEq, Eq)]
