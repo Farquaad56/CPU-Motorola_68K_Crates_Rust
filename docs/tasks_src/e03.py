@@ -1,4 +1,4 @@
-﻿from _dsl import T
+from _dsl import T
 
 M = "puce-m68k-machines"
 
