@@ -5,6 +5,7 @@ use crate::flat::FlatRam;
 use puce_m68k::cpu::Cpu;
 use puce_m68k::probe::BusEvent;
 use puce_m68k::state::CpuState;
+use std::path::Path;
 
 /// Magic of a whole file.
 const MAGIC_FILE: u32 = 0x1A3F_5D71;
@@ -380,6 +381,149 @@ pub fn run_test(cpu: &mut Cpu, ram: &mut FlatRam, t: &Test) -> Outcome {
     }
 }
 
+/// Per-file results of a run.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FileSummary {
+    /// File name without `.json.bin` (for example `ADD.b`).
+    pub stem: String,
+    /// Number of tests in the file.
+    pub total: u32,
+    /// Tests that pass.
+    pub passed: u32,
+    /// Tests that fail.
+    pub failed: u32,
+    /// Tests skipped because they contain an address error (D-030).
+    pub skipped_addr_error: u32,
+    /// Messages of the first failures (5 at most).
+    pub first_failures: Vec<String>,
+}
+
+/// Runs every test of a `.json.bin` file.
+pub fn run_file(path: &Path, cpu: &mut Cpu, ram: &mut FlatRam) -> Result<FileSummary, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let tests = parse_file(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut s = FileSummary {
+        stem: name.strip_suffix(".json.bin").unwrap_or(&name).to_string(),
+        ..FileSummary::default()
+    };
+    for t in &tests {
+        s.total += 1;
+        match run_test(cpu, ram, t) {
+            Outcome::Pass => s.passed += 1,
+            Outcome::SkipAddrError => s.skipped_addr_error += 1,
+            Outcome::Fail(m) => {
+                s.failed += 1;
+                if s.first_failures.len() < 5 {
+                    s.first_failures.push(m);
+                }
+            }
+        }
+    }
+    Ok(s)
+}
+
+/// Which test files to run (an empty list means all of them).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Selection {
+    /// Exact stems (`ADD.b`) or base names (`ADD` selects `ADD` and `ADD.*`).
+    pub stems: Vec<String>,
+}
+
+impl Selection {
+    /// Builds a selection from command line filters.
+    pub fn from_filters(filters: &[String]) -> Self {
+        Selection {
+            stems: filters.to_vec(),
+        }
+    }
+
+    /// Selects the stems of `epic` in `instructions.tsv` (columns `stem` and `epic`).
+    pub fn from_epic(tsv: &Path, epic: &str) -> Result<Self, String> {
+        let text = std::fs::read_to_string(tsv).map_err(|e| format!("{}: {e}", tsv.display()))?;
+        let mut lines = text.lines();
+        let header: Vec<&str> = lines.next().unwrap_or("").split('\t').collect();
+        let col = |n: &str| {
+            header
+                .iter()
+                .position(|h| *h == n)
+                .ok_or_else(|| format!("{}: no `{n}` column", tsv.display()))
+        };
+        let (c_stem, c_epic) = (col("stem")?, col("epic")?);
+        let stems = lines
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|l| {
+                let f: Vec<&str> = l.split('\t').collect();
+                (f.get(c_epic) == Some(&epic)).then(|| f.get(c_stem).unwrap_or(&"").to_string())
+            })
+            .collect();
+        Ok(Selection { stems })
+    }
+
+    /// True if the file `stem` is selected.
+    pub fn matches(&self, stem: &str) -> bool {
+        self.stems.is_empty()
+            || self.stems.iter().any(|f| {
+                stem == f
+                    || stem
+                        .strip_prefix(f.as_str())
+                        .is_some_and(|r| r.starts_with('.'))
+            })
+    }
+}
+
+/// Runs the selected files of `dir` in alphabetical order. A requested stem without a file is an error.
+pub fn run_dir(dir: &Path, sel: &Selection) -> Result<Vec<FileSummary>, String> {
+    let mut files: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for e in std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+        let p = e.map_err(|e| e.to_string())?.path();
+        let name = p
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if let Some(stem) = name.strip_suffix(".json.bin") {
+            files.push((stem.to_string(), p.clone()));
+        }
+    }
+    files.sort();
+    for f in &sel.stems {
+        let probe = Selection {
+            stems: vec![f.clone()],
+        };
+        if !files.iter().any(|(s, _)| probe.matches(s)) {
+            return Err(format!("no test file for `{f}` in {}", dir.display()));
+        }
+    }
+    let mut cpu = Cpu::new();
+    let mut ram = FlatRam::new();
+    let mut out = Vec::new();
+    for (stem, path) in &files {
+        if sel.matches(stem) {
+            out.push(run_file(path, &mut cpu, &mut ram)?);
+        }
+    }
+    Ok(out)
+}
+
+/// Reads the known exceptions (first tab-separated column, empty lines ignored).
+pub fn load_known(path: &Path) -> Result<Vec<String>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| l.split('\t').next())
+        .map(|s| s.trim().to_string())
+        .collect())
+}
+
+/// True if the file has no failure, or if its base stem (before the first dot) is a known exception.
+pub fn is_clean(s: &FileSummary, known: &[String]) -> bool {
+    let base = s.stem.split('.').next().unwrap_or("");
+    s.failed == 0 || known.iter().any(|k| k == base)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -716,5 +860,96 @@ mod tests {
             Outcome::Fail(m) => assert!(m.starts_with("007 NOP 4e71: pc"), "{m}"),
             o => panic!("{o:?}"),
         }
+    }
+
+    fn tmp_dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("m68k_ssc_{}_{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn fake_dir(name: &str, stems: &[&str]) -> std::path::PathBuf {
+        let d = tmp_dir(name);
+        for s in stems {
+            std::fs::write(d.join(format!("{s}.json.bin")), encode(&[idle_test()])).unwrap();
+        }
+        d
+    }
+
+    fn stems(r: &[FileSummary]) -> Vec<&str> {
+        r.iter().map(|s| s.stem.as_str()).collect()
+    }
+
+    const ADD_FAMILY: [&str; 6] = ["ADD.b", "ADD.l", "ADD.w", "ADDA.l", "ADDX.b", "NOP"];
+
+    #[test]
+    fn e03_06_filter_exact() {
+        let d = fake_dir("exact", &ADD_FAMILY);
+        let sel = Selection::from_filters(&["ADD.b".to_string()]);
+        let r = run_dir(&d, &sel).unwrap();
+        assert_eq!(stems(&r), ["ADD.b"]);
+        assert_eq!((r[0].total, r[0].passed), (1, 1));
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn e03_06_filter_base() {
+        let d = fake_dir("base", &ADD_FAMILY);
+        let sel = Selection::from_filters(&["ADD".to_string()]);
+        let r = run_dir(&d, &sel).unwrap();
+        assert_eq!(stems(&r), ["ADD.b", "ADD.l", "ADD.w"]);
+        let all = run_dir(&d, &Selection::default()).unwrap();
+        assert_eq!(all.len(), 6);
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn e03_06_epic_select() {
+        let d = tmp_dir("epic");
+        let tsv = d.join("i.tsv");
+        std::fs::write(
+            &tsv,
+            "stem\tmnemonic\tsize\tfile\ttests\tepic\tnotes\nABCD\tABCD\t-\tABCD.json.bin\t2500\tE08\t\nADD.b\tADD\tb\tADD.b.json.bin\t2500\tE07\tn\nADDA.l\tADDA\tl\tADDA.l.json.bin\t2500\tE07\t\n",
+        )
+        .unwrap();
+        let sel = Selection::from_epic(&tsv, "E07").unwrap();
+        assert_eq!(sel.stems, ["ADD.b", "ADDA.l"]);
+        assert!(sel.matches("ADD.b") && sel.matches("ADDA.l") && !sel.matches("ABCD"));
+        assert!(Selection::from_epic(&d.join("absent.tsv"), "E07").is_err());
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn e03_06_known_parse() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/specs/data/sst_known_exceptions.txt"
+        );
+        let known = load_known(Path::new(path)).unwrap();
+        assert!(known.contains(&"TAS".to_string()) && known.contains(&"TRAPV".to_string()));
+    }
+
+    #[test]
+    fn e03_06_is_clean_known() {
+        let known = vec!["TAS".to_string(), "TRAPV".to_string()];
+        let s = |stem: &str, failed| FileSummary {
+            stem: stem.to_string(),
+            total: 2500,
+            failed,
+            ..FileSummary::default()
+        };
+        assert!(is_clean(&s("TAS", 5), &known));
+        assert!(!is_clean(&s("ADD.b", 1), &known));
+        assert!(is_clean(&s("ADD.b", 0), &known));
+    }
+
+    #[test]
+    fn e03_06_missing_stem() {
+        let d = fake_dir("missing", &ADD_FAMILY);
+        let sel = Selection::from_filters(&["NOPE".to_string()]);
+        let err = run_dir(&d, &sel).unwrap_err();
+        assert!(err.contains("NOPE"), "{err}");
+        let _ = std::fs::remove_dir_all(d);
     }
 }
