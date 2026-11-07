@@ -12,10 +12,10 @@ extern crate std;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod bus;
+pub mod cpu;
+pub mod engine;
 pub mod pins;
 pub mod regs;
-// pub mod cpu;
-pub mod engine;
 // pub mod decode;
 // pub mod ea;
 // pub mod alu;
