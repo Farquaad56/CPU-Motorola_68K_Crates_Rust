@@ -1494,6 +1494,136 @@ pub const fn cmp_rules(id: InsnId) -> [Rule; N_RULES_CMP] {
     out
 }
 
+// ---------------------------------------------------------------------------------------------
+// MULU / MULS. Timing: docs/specs/instr/MULU.md: `np` then 17 + m internal cycles (`Tok::Nv`).
+// ---------------------------------------------------------------------------------------------
+
+/// Hook of the `MULU` / `MULS` plans (computes the product and the length of the idle cycle).
+pub const HK_MUL: u8 = 0x8D;
+
+/// Number of 01 / 10 patterns in the 16-bit source with a zero appended (`MULS`).
+pub fn muls_pattern_count(src: u16) -> u32 {
+    let v = (src as u32) << 1;
+    ((v ^ (v >> 1)) & 0xFFFF).count_ones()
+}
+
+/// Semantics of [`HK_MUL`].
+pub fn mul_exec(signed: bool, cpu: &mut Cpu) {
+    let ird = cpu.lat.ird;
+    let reg = (ird & 7) as usize;
+    let src = if (ird >> 3) & 7 == 0 {
+        cpu.regs.d[reg] as u16
+    } else {
+        cpu.lat.val as u16
+    };
+    let dn = ((ird >> 9) & 7) as usize;
+    let dst = cpu.regs.d[dn] as u16;
+    let (r, m) = if signed {
+        (
+            (i32::from(src as i16) * i32::from(dst as i16)) as u32,
+            muls_pattern_count(src),
+        )
+    } else {
+        (u32::from(src) * u32::from(dst), src.count_ones())
+    };
+    cpu.regs.d[dn] = r;
+    cpu.lat.idle = (34 + 2 * m) as u8;
+    let mut sr = cpu.regs.sr & !(N | Z | V | C);
+    if r == 0 {
+        sr |= Z;
+    }
+    if r & 0x8000_0000 != 0 {
+        sr |= N;
+    }
+    cpu.regs.sr = sr;
+}
+
+const fn build_mul(f: usize) -> Entry {
+    let mut e = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    if f >= 2 {
+        e = push_all(e, ea_read_plan(src_ea(f), Size::Word));
+    }
+    e = push(e, Tok::H(HK_MUL));
+    e = push(e, Tok::Pf);
+    push(e, Tok::Nv)
+}
+
+const fn build_mul_plans() -> [Entry; SRC_FORMS] {
+    let empty = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    let mut out = [empty; SRC_FORMS];
+    let mut f = 0;
+    while f < SRC_FORMS {
+        out[f] = build_mul(f);
+        f += 1;
+    }
+    out
+}
+
+static MUL_PLANS: [Entry; SRC_FORMS] = build_mul_plans();
+
+/// Plan of `MULU` / `MULS`.
+pub fn mul_plan(cpu: &Cpu) -> Plan {
+    let e = &MUL_PLANS[src_form(cpu.lat.ird)];
+    &e.toks[..e.n]
+}
+
+/// Hook dispatcher of `MULU` / `MULS`.
+pub fn mul_hook(signed: bool, k: u8, cpu: &mut Cpu) {
+    if k == HK_MUL {
+        mul_exec(signed, cpu);
+    } else {
+        let ird = cpu.lat.ird;
+        crate::ea::run_ea_hook(cpu, k, (ird & 7) as u8, Size::Word);
+    }
+}
+
+/// Number of rules of `MULU` / `MULS` (every mode but `An`).
+pub const N_RULES_MUL: usize = SRC_FORMS - 1;
+
+/// Decoding rules of `MULU` (`opmode` 0xC0C0) or `MULS` (0xC1C0): `base | Dn << 9 | ea`.
+pub const fn mul_rules(base: u16, id: InsnId) -> [Rule; N_RULES_MUL] {
+    let mut out = [Rule {
+        mask: 0,
+        value: 0,
+        id: InsnId::ILLEGAL,
+        variant: 0,
+    }; N_RULES_MUL];
+    let mut k = 0;
+    let mut f = 0;
+    while f < SRC_FORMS {
+        if f != 1 {
+            let (m, v): (u16, u16) = match f {
+                0 => (0x38, 0),
+                2 => (0x38, 2 << 3),
+                3 => (0x38, 3 << 3),
+                4 => (0x38, 4 << 3),
+                5 => (0x38, 5 << 3),
+                6 => (0x38, 6 << 3),
+                7 => (0x3F, 0x38),
+                8 => (0x3F, 0x39),
+                9 => (0x3F, 0x3A),
+                10 => (0x3F, 0x3B),
+                _ => (0x3F, 0x3C),
+            };
+            out[k] = Rule {
+                mask: 0xF1C0 | m,
+                value: base | v,
+                id,
+                variant: 0,
+            };
+            k += 1;
+        }
+        f += 1;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

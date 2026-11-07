@@ -27,6 +27,8 @@ pub mod i_movea;
 pub mod i_movem;
 pub mod i_movep;
 pub mod i_moveq;
+pub mod i_muls;
+pub mod i_mulu;
 pub mod i_neg;
 pub mod i_negx;
 pub mod i_pea;
@@ -67,6 +69,8 @@ const GROUPS: &[&[Rule]] = &[
     i_tst::RULES,
     i_cmp::RULES,
     i_cmpa::RULES,
+    i_mulu::RULES,
+    i_muls::RULES,
     // @groups
 ];
 
@@ -98,6 +102,8 @@ const GROUPS: &[&[Rule]] = &[
     i_tst::RULES,
     i_cmp::RULES,
     i_cmpa::RULES,
+    i_mulu::RULES,
+    i_muls::RULES,
     // @tgroups
     testing::RULES,
 ];
@@ -171,6 +177,8 @@ pub(crate) fn plan_for(id: InsnId, variant: u8, cpu: &mut Cpu) -> Plan {
         i_tst::ID => i_tst::plan(variant, cpu),
         i_cmp::ID => i_cmp::plan(variant, cpu),
         i_cmpa::ID => i_cmpa::plan(variant, cpu),
+        i_mulu::ID => i_mulu::plan(variant, cpu),
+        i_muls::ID => i_muls::plan(variant, cpu),
         // @plans
         #[cfg(test)]
         testing::ID => testing::plan(variant),
@@ -207,6 +215,8 @@ pub(crate) fn run_hook(id: InsnId, k: u8, cpu: &mut Cpu) {
         i_tst::ID => i_tst::hook(k, cpu),
         i_cmp::ID => i_cmp::hook(k, cpu),
         i_cmpa::ID => i_cmpa::hook(k, cpu),
+        i_mulu::ID => i_mulu::hook(k, cpu),
+        i_muls::ID => i_muls::hook(k, cpu),
         // @hooks
         #[cfg(test)]
         testing::ID => testing::hook(k, cpu),
