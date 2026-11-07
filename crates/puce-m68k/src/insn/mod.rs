@@ -12,11 +12,13 @@ use crate::cpu::Cpu;
 use crate::decode::{InsnId, Rule};
 use crate::engine::plan::Plan;
 
+pub mod i_lea;
 pub mod i_move;
 pub mod i_movea;
 pub mod i_movem;
 pub mod i_movep;
 pub mod i_moveq;
+pub mod i_pea;
 // @mods
 pub mod i_nop;
 
@@ -29,6 +31,8 @@ const GROUPS: &[&[Rule]] = &[
     i_moveq::RULES,
     i_movem::RULES,
     i_movep::RULES,
+    i_lea::RULES,
+    i_pea::RULES,
     // @groups
 ];
 
@@ -41,6 +45,8 @@ const GROUPS: &[&[Rule]] = &[
     i_moveq::RULES,
     i_movem::RULES,
     i_movep::RULES,
+    i_lea::RULES,
+    i_pea::RULES,
     // @tgroups
     testing::RULES,
 ];
@@ -95,6 +101,8 @@ pub(crate) fn plan_for(id: InsnId, variant: u8, cpu: &mut Cpu) -> Plan {
         i_moveq::ID => i_moveq::plan(variant),
         i_movem::ID => i_movem::plan(variant, cpu),
         i_movep::ID => i_movep::plan(variant),
+        i_lea::ID => i_lea::plan(variant),
+        i_pea::ID => i_pea::plan(variant),
         // @plans
         #[cfg(test)]
         testing::ID => testing::plan(variant),
@@ -112,6 +120,8 @@ pub(crate) fn run_hook(id: InsnId, k: u8, cpu: &mut Cpu) {
         i_moveq::ID => i_moveq::hook(k, cpu),
         i_movem::ID => i_movem::hook(k, cpu),
         i_movep::ID => i_movep::hook(k, cpu),
+        i_lea::ID => i_lea::hook(k, cpu),
+        i_pea::ID => i_pea::hook(k, cpu),
         // @hooks
         #[cfg(test)]
         testing::ID => testing::hook(k, cpu),
