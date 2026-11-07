@@ -22,10 +22,11 @@ pub mod pins;
 pub mod regs;
 pub mod state;
 // pub mod sem;
+#[cfg(feature = "disasm")]
+pub mod disasm;
 pub mod exception;
 #[cfg(feature = "inspect")]
 pub mod probe;
-// pub mod disasm;
 
 #[cfg(test)]
 mod tests {

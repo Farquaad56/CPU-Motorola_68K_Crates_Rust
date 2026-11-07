@@ -22,6 +22,12 @@ pub enum Cmd {
     Run {
         /// Program file.
         rom: PathBuf,
+        /// Stop after this many instructions.
+        #[arg(long, default_value_t = 1_000_000)]
+        max_instr: u64,
+        /// Load address (hex); PC starts there. Default: load at 0, SSP/PC from the vectors.
+        #[arg(long)]
+        org: Option<String>,
     },
     /// Run the SingleStepTests/m68000 files of a directory.
     Ssc {
@@ -50,15 +56,26 @@ pub enum Cmd {
         /// Origin address (hex).
         #[arg(long, default_value = "0")]
         org: String,
+        /// Number of instructions to show (default: the whole file).
+        #[arg(long)]
+        count: Option<usize>,
     },
     /// Download the reference documents and test suites.
-    Fetch,
+    Fetch {
+        /// Only download `docs` or `tests`.
+        #[arg(long, value_parser = ["docs", "tests"])]
+        only: Option<String>,
+    },
 }
 
 fn main() {
     let cli = Cli::parse();
     let res = match &cli.command {
-        Cmd::Run { rom } => commands::run(rom).map(|()| 0),
+        Cmd::Run {
+            rom,
+            max_instr,
+            org,
+        } => commands::run(rom, *max_instr, org.as_deref()).map(|()| 0),
         Cmd::Ssc {
             dir,
             filter,
@@ -74,8 +91,8 @@ fn main() {
             max_fail: *max_fail,
             known: known.as_deref(),
         }),
-        Cmd::Disasm { file, org } => commands::disasm(file, org).map(|()| 0),
-        Cmd::Fetch => commands::fetch().map(|()| 0),
+        Cmd::Disasm { file, org, count } => commands::disasm(file, org, *count).map(|()| 0),
+        Cmd::Fetch { only } => commands::fetch(only.as_deref()),
     };
     match res {
         Ok(0) => {}
@@ -95,6 +112,27 @@ mod tests {
     fn e01_03_parse_run() {
         let c = Cli::try_parse_from(["m68k", "run", "x.bin"]).unwrap();
         assert!(matches!(c.command, Cmd::Run { .. }));
+    }
+
+    #[test]
+    fn e12_07_parse_only() {
+        let c = Cli::try_parse_from(["m68k", "fetch", "--only", "docs"]).unwrap();
+        assert!(matches!(c.command, Cmd::Fetch { only: Some(ref o) } if o == "docs"));
+        assert!(Cli::try_parse_from(["m68k", "fetch", "--only", "zip"]).is_err());
+        let c = Cli::try_parse_from([
+            "m68k",
+            "run",
+            "x.bin",
+            "--max-instr",
+            "10",
+            "--org",
+            "0x1000",
+        ])
+        .unwrap();
+        assert!(matches!(c.command, Cmd::Run { max_instr: 10, .. }));
+        let c =
+            Cli::try_parse_from(["m68k", "disasm", "x.bin", "--org", "0", "--count", "3"]).unwrap();
+        assert!(matches!(c.command, Cmd::Disasm { count: Some(3), .. }));
     }
 
     #[test]
