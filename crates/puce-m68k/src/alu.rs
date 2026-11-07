@@ -2537,6 +2537,71 @@ pub fn cond_true(cond: u16, sr: u16) -> bool {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Scc. Timing: docs/specs/instr/Scc.md.
+// ---------------------------------------------------------------------------------------------
+
+static SCC_TRUE_REG: [Tok; 3] = [Tok::H(HK_UNARY), Tok::Pf, Tok::N(2)];
+
+/// Plan of `Scc` (byte read-modify-write; register form: `np`, or `np n` when the condition holds).
+pub fn scc_plan(cpu: &Cpu) -> Plan {
+    let ird = cpu.lat.ird;
+    let f = imm_form(ird);
+    if f == 0 {
+        if cond_true(ird >> 8, cpu.regs.sr) {
+            &SCC_TRUE_REG
+        } else {
+            &SCC_TRUE_REG[..2]
+        }
+    } else {
+        let e = &UNARY_RMW[f];
+        &e.toks[..e.n]
+    }
+}
+
+/// Hook dispatcher of `Scc`.
+pub fn scc_hook(k: u8, cpu: &mut Cpu) {
+    let ird = cpu.lat.ird;
+    if k == HK_UNARY {
+        let v = if cond_true(ird >> 8, cpu.regs.sr) {
+            0xFF
+        } else {
+            0
+        };
+        if (ird >> 3) & 7 == 0 {
+            set_dn(cpu, (ird & 7) as usize, Size::Byte, v);
+        } else {
+            cpu.lat.val = v;
+        }
+    } else {
+        crate::ea::run_ea_hook(cpu, k, (ird & 7) as u8, Size::Byte);
+    }
+}
+
+/// Number of rules of `Scc`.
+pub const N_RULES_SCC: usize = IMM_FORMS;
+
+/// Decoding rules of `Scc` (`0101 cccc 11 ea`, data-alterable modes, any condition).
+pub const fn scc_rules(id: InsnId) -> [Rule; N_RULES_SCC] {
+    let mut out = [Rule {
+        mask: 0,
+        value: 0,
+        id: InsnId::ILLEGAL,
+        variant: 0,
+    }; N_RULES_SCC];
+    let mut f = 0;
+    while f < IMM_FORMS {
+        let r = imm_form_rule(0x50C0, 0, f, id);
+        out[f] = Rule {
+            mask: 0xF0C0 | (r.mask & 0x3F),
+            variant: 0,
+            ..r
+        };
+        f += 1;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

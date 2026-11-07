@@ -23,15 +23,19 @@ pub mod i_bcc;
 pub mod i_bchg;
 pub mod i_bclr;
 pub mod i_bset;
+pub mod i_bsr;
 pub mod i_btst;
 pub mod i_clr;
 pub mod i_cmp;
 pub mod i_cmpa;
+pub mod i_dbcc;
 pub mod i_divs;
 pub mod i_divu;
 pub mod i_eor;
 pub mod i_exg;
 pub mod i_ext;
+pub mod i_jmp;
+pub mod i_jsr;
 pub mod i_lea;
 pub mod i_link;
 pub mod i_lsl;
@@ -53,7 +57,10 @@ pub mod i_rol;
 pub mod i_ror;
 pub mod i_roxl;
 pub mod i_roxr;
+pub mod i_rtr;
+pub mod i_rts;
 pub mod i_sbcd;
+pub mod i_scc;
 pub mod i_sub;
 pub mod i_suba;
 pub mod i_subx;
@@ -115,6 +122,13 @@ const GROUPS: &[&[Rule]] = &[
     i_sbcd::RULES,
     i_nbcd::RULES,
     i_bcc::RULES,
+    i_bsr::RULES,
+    i_dbcc::RULES,
+    i_scc::RULES,
+    i_jmp::RULES,
+    i_jsr::RULES,
+    i_rts::RULES,
+    i_rtr::RULES,
     // @groups
 ];
 
@@ -170,6 +184,13 @@ const GROUPS: &[&[Rule]] = &[
     i_sbcd::RULES,
     i_nbcd::RULES,
     i_bcc::RULES,
+    i_bsr::RULES,
+    i_dbcc::RULES,
+    i_scc::RULES,
+    i_jmp::RULES,
+    i_jsr::RULES,
+    i_rts::RULES,
+    i_rtr::RULES,
     // @tgroups
     testing::RULES,
 ];
@@ -267,6 +288,13 @@ pub(crate) fn plan_for(id: InsnId, variant: u8, cpu: &mut Cpu) -> Plan {
         i_sbcd::ID => i_sbcd::plan(variant, cpu),
         i_nbcd::ID => i_nbcd::plan(variant, cpu),
         i_bcc::ID => i_bcc::plan(variant, cpu),
+        i_bsr::ID => i_bsr::plan(variant, cpu),
+        i_dbcc::ID => i_dbcc::plan(variant, cpu),
+        i_scc::ID => i_scc::plan(variant, cpu),
+        i_jmp::ID => i_jmp::plan(variant, cpu),
+        i_jsr::ID => i_jsr::plan(variant, cpu),
+        i_rts::ID => i_rts::plan(variant, cpu),
+        i_rtr::ID => i_rtr::plan(variant, cpu),
         // @plans
         #[cfg(test)]
         testing::ID => testing::plan(variant),
@@ -327,6 +355,13 @@ pub(crate) fn run_hook(id: InsnId, k: u8, cpu: &mut Cpu) {
         i_sbcd::ID => i_sbcd::hook(k, cpu),
         i_nbcd::ID => i_nbcd::hook(k, cpu),
         i_bcc::ID => i_bcc::hook(k, cpu),
+        i_bsr::ID => i_bsr::hook(k, cpu),
+        i_dbcc::ID => i_dbcc::hook(k, cpu),
+        i_scc::ID => i_scc::hook(k, cpu),
+        i_jmp::ID => i_jmp::hook(k, cpu),
+        i_jsr::ID => i_jsr::hook(k, cpu),
+        i_rts::ID => i_rts::hook(k, cpu),
+        i_rtr::ID => i_rtr::hook(k, cpu),
         // @hooks
         #[cfg(test)]
         testing::ID => testing::hook(k, cpu),
