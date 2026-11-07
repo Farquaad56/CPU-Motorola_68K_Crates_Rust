@@ -1,4 +1,4 @@
-from _dsl import T
+﻿from _dsl import T
 
 M = "puce-m68k-machines"
 
@@ -30,7 +30,7 @@ T("E03-03", "Etat du CPU: load_state, state, tick_bus", kind="code", size=130,
 Dans `cpu.rs`: `Cpu::load_state(&mut self, s: &CpuState)` (IR = prefetch[0], IRC = prefetch[1], le moteur est place a une frontiere d'instruction) et `Cpu::state(&self) -> CpuState`.
 `Cpu::tick_bus<B: Bus>(&mut self, bus: &mut B)`: construit les broches d'entree (DTACK=1 sauf pendant les `bus.wait_clocks` du cycle courant; `bus.read` appele a l'horloge ou le CPU echantillonne les donnees, `bus.write` a l'horloge ou la donnee est valide), appelle `tick`, puis `bus.on_tick(out)`.
 `Cpu::step_clocks<B: Bus>(&mut self, bus: &mut B, n: u32)` = n appels de `tick_bus`.""",
-  write=["crates/puce-m68k/src/state.rs", "crates/puce-m68k/src/cpu.rs", "crates/puce-m68k/src/lib.rs"],
+  write=["crates/puce-m68k/src/state.rs", "crates/puce-m68k/src/cpu.rs", "crates/puce-m68k/src/engine/mod.rs", "crates/puce-m68k/src/lib.rs"],
   tests=[("load_roundtrip", "load_state puis state() donne le meme CpuState"), ("ir_irc", "prefetch[0] -> regs.ir et prefetch[1] -> regs.irc"), ("boundary_after_load", "`at_instruction_boundary()` vrai apres load_state"), ("tick_bus_read", "plan [Rw(Ea)] sur un bus de test: `read` appele exactement une fois avec fc et uds/lds corrects"), ("tick_bus_wait", "`wait_clocks` renvoie 2: le cycle dure 6 horloges"), ("step_clocks", "step_clocks(4) = 4 ticks")])
 
 T("E03-04", "Journal de bus (feature inspect)", kind="code", size=100,
