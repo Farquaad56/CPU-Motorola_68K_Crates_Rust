@@ -20,6 +20,8 @@ pub(crate) struct Latch {
     pub(crate) val: u32,
     /// Opcode of the instruction being executed (IR moves on with every prefetch).
     pub(crate) ird: u16,
+    /// Scratch word for multi-step instructions (MOVEM: remaining mask and current register).
+    pub(crate) aux: u32,
 }
 
 /// What the engine does at its next clock.

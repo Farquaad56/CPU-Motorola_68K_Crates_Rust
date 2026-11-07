@@ -50,6 +50,7 @@ impl Cpu {
                 ea: 0,
                 val: 0,
                 ird: 0,
+                aux: 0,
             },
             cur: Decoded {
                 id: InsnId::ILLEGAL,
