@@ -291,6 +291,34 @@ mod tests {
     }
 
     #[test]
+    fn e13_02_dis_rows() {
+        let mut s = snap();
+        s.dis = vec![
+            DisRow {
+                addr: 0x100,
+                words: vec![0x7001],
+                text: "moveq #1,d0".into(),
+            },
+            DisRow {
+                addr: 0x102,
+                words: vec![0x4EB9, 0, 0x200],
+                text: "jsr $200".into(),
+            },
+        ];
+        let j = s.to_json();
+        assert!(
+            j.contains(
+                "\"dis\":[{\"addr\":256,\"words\":[28673],\"text\":\"moveq #1,d0\",\"len\":1}"
+            ),
+            "{j}"
+        );
+        assert!(
+            j.contains("\"words\":[20153,0,512],\"text\":\"jsr $200\",\"len\":3}"),
+            "{j}"
+        );
+    }
+
+    #[test]
     fn e13_02_mem_hex() {
         let j = snap().to_json();
         let at = j.find("\"hex\":\"").unwrap() + 7;
