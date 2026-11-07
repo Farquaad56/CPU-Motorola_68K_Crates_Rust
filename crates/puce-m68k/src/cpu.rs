@@ -306,6 +306,26 @@ impl Cpu {
         self.engine.journal.clear();
     }
 
+    /// One clock, starting an instruction (or an interrupt sequence) first when the CPU is at a
+    /// boundary. `None` when nothing runs (halted CPU, illegal opcode); `Some(true)` when the
+    /// clock completed the instruction.
+    pub fn step_clock<B: Bus>(&mut self, bus: &mut B) -> Option<bool> {
+        if self.halted {
+            return None;
+        }
+        if self.at_instruction_boundary() {
+            let ipl = bus.ipl();
+            if !self.take_interrupt(ipl) {
+                self.begin_instruction();
+            }
+            if self.at_instruction_boundary() {
+                return None;
+            }
+        }
+        self.tick_bus(bus);
+        Some(self.at_instruction_boundary())
+    }
+
     /// `n` calls of [`Cpu::tick_bus`].
     pub fn step_clocks<B: Bus>(&mut self, bus: &mut B, n: u32) {
         for _ in 0..n {
