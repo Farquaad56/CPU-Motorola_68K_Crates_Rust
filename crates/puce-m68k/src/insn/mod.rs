@@ -35,6 +35,7 @@ pub mod i_muls;
 pub mod i_mulu;
 pub mod i_neg;
 pub mod i_negx;
+pub mod i_not;
 pub mod i_or;
 pub mod i_pea;
 pub mod i_sub;
@@ -81,6 +82,7 @@ const GROUPS: &[&[Rule]] = &[
     i_and::RULES,
     i_or::RULES,
     i_eor::RULES,
+    i_not::RULES,
     // @groups
 ];
 
@@ -119,6 +121,7 @@ const GROUPS: &[&[Rule]] = &[
     i_and::RULES,
     i_or::RULES,
     i_eor::RULES,
+    i_not::RULES,
     // @tgroups
     testing::RULES,
 ];
@@ -199,6 +202,7 @@ pub(crate) fn plan_for(id: InsnId, variant: u8, cpu: &mut Cpu) -> Plan {
         i_and::ID => i_and::plan(variant, cpu),
         i_or::ID => i_or::plan(variant, cpu),
         i_eor::ID => i_eor::plan(variant, cpu),
+        i_not::ID => i_not::plan(variant, cpu),
         // @plans
         #[cfg(test)]
         testing::ID => testing::plan(variant),
@@ -242,6 +246,7 @@ pub(crate) fn run_hook(id: InsnId, k: u8, cpu: &mut Cpu) {
         i_and::ID => i_and::hook(k, cpu),
         i_or::ID => i_or::hook(k, cpu),
         i_eor::ID => i_eor::hook(k, cpu),
+        i_not::ID => i_not::hook(k, cpu),
         // @hooks
         #[cfg(test)]
         testing::ID => testing::hook(k, cpu),
