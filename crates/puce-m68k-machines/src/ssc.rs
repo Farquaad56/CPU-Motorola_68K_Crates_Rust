@@ -1,4 +1,10 @@
-//! SingleStepTests/m68000 runner: reader of the `.json.bin` binary format (spec 33).
+//! SingleStepTests/m68000 runner: reader of the `.json.bin` binary format (spec 33) and
+//! single-test execution.
+
+use crate::flat::FlatRam;
+use puce_m68k::cpu::Cpu;
+use puce_m68k::probe::BusEvent;
+use puce_m68k::state::CpuState;
 
 /// Magic of a whole file.
 const MAGIC_FILE: u32 = 0x1A3F_5D71;
@@ -229,6 +235,151 @@ pub fn parse_file(bytes: &[u8]) -> Result<Vec<Test>, String> {
     Ok(tests)
 }
 
+/// Result of running one test.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    /// The final state and the bus transactions match.
+    Pass,
+    /// The test contains an address error cycle (`re`/`we`): ignored until E11 (D-030).
+    SkipAddrError,
+    /// First difference found (names the test, the field, expected and obtained values).
+    Fail(String),
+}
+
+fn kind_code(k: Kind) -> u8 {
+    match k {
+        Kind::Idle => 0,
+        Kind::Write => 1,
+        Kind::Read => 2,
+        Kind::Tas => 3,
+        Kind::ReadAddrErr => 4,
+        Kind::WriteAddrErr => 5,
+    }
+}
+
+/// Compares the expected transactions with the journal; the message names the transaction index.
+fn compare_trans(expected: &[Trans], got: &[BusEvent]) -> Result<(), String> {
+    for (i, e) in expected.iter().enumerate() {
+        let Some(g) = got.get(i) else {
+            return Err(format!(
+                "transaction #{i}: expected {:?} of {} clocks, got nothing (journal has {} events)",
+                e.kind,
+                e.cycles,
+                got.len()
+            ));
+        };
+        let mut fields: Vec<(&str, u32, u32)> = vec![
+            ("kind", u32::from(kind_code(e.kind)), u32::from(g.kind)),
+            ("cycles", e.cycles, g.clocks),
+        ];
+        if e.kind != Kind::Idle {
+            fields.extend([
+                ("fc", e.fc, u32::from(g.fc)),
+                ("addr", e.addr, g.addr),
+                ("data", e.data, u32::from(g.data)),
+                ("uds", e.uds, u32::from(g.uds)),
+                ("lds", e.lds, u32::from(g.lds)),
+            ]);
+        }
+        for (name, want, have) in fields {
+            if want != have {
+                return Err(format!(
+                    "transaction #{i}: {name}: expected {want:#x}, got {have:#x}"
+                ));
+            }
+        }
+    }
+    if got.len() > expected.len() {
+        return Err(format!(
+            "transaction #{}: unexpected extra event ({} expected, {} obtained)",
+            expected.len(),
+            expected.len(),
+            got.len()
+        ));
+    }
+    Ok(())
+}
+
+fn compare_state(cpu: &CpuState, want: &State) -> Result<(), String> {
+    let mut fields: Vec<(String, u32, u32)> = Vec::new();
+    for i in 0..8 {
+        fields.push((format!("d{i}"), want.d[i], cpu.d[i]));
+    }
+    for i in 0..7 {
+        fields.push((format!("a{i}"), want.a[i], cpu.a[i]));
+    }
+    fields.push(("usp".into(), want.usp, cpu.usp));
+    fields.push(("ssp".into(), want.ssp, cpu.ssp));
+    fields.push(("sr".into(), want.sr, u32::from(cpu.sr)));
+    fields.push(("pc".into(), want.pc, cpu.pc));
+    fields.push((
+        "prefetch0".into(),
+        want.prefetch[0],
+        u32::from(cpu.prefetch[0]),
+    ));
+    fields.push((
+        "prefetch1".into(),
+        want.prefetch[1],
+        u32::from(cpu.prefetch[1]),
+    ));
+    for (name, w, h) in fields {
+        if w != h {
+            return Err(format!("{name}: expected {w:#x}, got {h:#x}"));
+        }
+    }
+    Ok(())
+}
+
+/// Runs one test on `cpu` with `ram` as memory and compares the final state and the bus
+/// transactions (spec 33, section 5).
+pub fn run_test(cpu: &mut Cpu, ram: &mut FlatRam, t: &Test) -> Outcome {
+    if t.trans
+        .iter()
+        .any(|x| matches!(x.kind, Kind::ReadAddrErr | Kind::WriteAddrErr))
+    {
+        return Outcome::SkipAddrError;
+    }
+    ram.clear_touched();
+    for &(addr, word) in &t.initial.ram {
+        ram.poke_word(addr, word);
+    }
+    let s = &t.initial;
+    cpu.load_state(&CpuState {
+        d: s.d,
+        a: s.a,
+        usp: s.usp,
+        ssp: s.ssp,
+        sr: s.sr as u16,
+        pc: s.pc,
+        prefetch: [s.prefetch[0] as u16, s.prefetch[1] as u16],
+    });
+    cpu.clear_journal();
+    cpu.step_clocks(ram, t.length);
+
+    let fail = |what: String| Outcome::Fail(format!("{}: {what}", t.name));
+    if let Err(e) = compare_state(&cpu.state(), &t.final_) {
+        return fail(e);
+    }
+    for &(addr, word) in &t.final_.ram {
+        let got = ram.peek_word(addr);
+        if got != word {
+            return fail(format!(
+                "ram[{addr:#08x}]: expected {word:#06x}, got {got:#06x}"
+            ));
+        }
+    }
+    if cpu.journal_overflow() > 0 {
+        return fail(format!(
+            "journal overflow ({} events lost)",
+            cpu.journal_overflow()
+        ));
+    }
+    match compare_trans(&t.trans, cpu.journal()) {
+        Ok(()) => Outcome::Pass,
+        Err(e) => fail(e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,5 +594,127 @@ mod tests {
             }
         }
         std::println!("files={files} tests={tests} min_bus_cycles={min_bus} odd_addr_bus={odd} idle_odd={idle_odd}");
+    }
+
+    fn runner_state() -> State {
+        State {
+            d: [0; 8],
+            a: [0; 7],
+            usp: 0x1000,
+            ssp: 0x2000,
+            sr: 0x2700,
+            pc: 0x404,
+            prefetch: [0x4E71, 0x4E71],
+            ram: vec![(0x400, 0x4E71)],
+        }
+    }
+
+    /// A test an idle core passes: nothing to execute, final state = initial state.
+    fn idle_test() -> Test {
+        let s = runner_state();
+        Test {
+            name: "idle".to_string(),
+            initial: s.clone(),
+            final_: s,
+            trans: vec![],
+            length: 0,
+        }
+    }
+
+    fn run(t: &Test) -> Outcome {
+        run_test(&mut Cpu::new(), &mut FlatRam::new(), t)
+    }
+
+    #[test]
+    fn e03_05_skip_addr_error() {
+        let mut t = idle_test();
+        t.trans = vec![Trans {
+            kind: Kind::ReadAddrErr,
+            cycles: 4,
+            fc: 5,
+            addr: 0x10,
+            data: 0,
+            uds: 1,
+            lds: 1,
+        }];
+        assert_eq!(run(&t), Outcome::SkipAddrError);
+    }
+
+    #[test]
+    fn e03_05_fail_reg() {
+        let mut t = idle_test();
+        t.final_.d[0] = 1;
+        match run(&t) {
+            Outcome::Fail(m) => assert!(
+                m.contains("d0") && m.contains("expected 0x1, got 0x0"),
+                "{m}"
+            ),
+            o => panic!("{o:?}"),
+        }
+    }
+
+    #[test]
+    fn e03_05_fail_cycles() {
+        let want = [
+            Trans {
+                kind: Kind::Idle,
+                cycles: 2,
+                fc: 0,
+                addr: 0,
+                data: 0,
+                uds: 0,
+                lds: 0,
+            },
+            Trans {
+                kind: Kind::Read,
+                cycles: 4,
+                fc: 6,
+                addr: 0x404,
+                data: 0x4E71,
+                uds: 1,
+                lds: 1,
+            },
+        ];
+        let ev = |kind, clocks| BusEvent {
+            kind,
+            clocks,
+            fc: 6,
+            addr: 0x404,
+            data: 0x4E71,
+            uds: true,
+            lds: true,
+        };
+        assert_eq!(compare_trans(&want, &[ev(0, 2), ev(2, 4)]), Ok(()));
+        let err = compare_trans(&want, &[ev(0, 2), ev(2, 6)]).unwrap_err();
+        assert!(
+            err.contains("transaction #1") && err.contains("cycles"),
+            "{err}"
+        );
+        // a missing transaction names its index too
+        let err = compare_trans(&want, &[ev(0, 2)]).unwrap_err();
+        assert!(err.contains("transaction #1"), "{err}");
+        // and so does the run of a real test whose core executes nothing
+        let mut t = idle_test();
+        t.trans = want.to_vec();
+        match run(&t) {
+            Outcome::Fail(m) => assert!(m.contains("transaction #0"), "{m}"),
+            o => panic!("{o:?}"),
+        }
+    }
+
+    #[test]
+    fn e03_05_pass_synthetic() {
+        assert_eq!(run(&idle_test()), Outcome::Pass);
+    }
+
+    #[test]
+    fn e03_05_msg_names_test() {
+        let mut t = idle_test();
+        t.name = "007 NOP 4e71".to_string();
+        t.final_.pc = 0x406;
+        match run(&t) {
+            Outcome::Fail(m) => assert!(m.starts_with("007 NOP 4e71: pc"), "{m}"),
+            o => panic!("{o:?}"),
+        }
     }
 }
