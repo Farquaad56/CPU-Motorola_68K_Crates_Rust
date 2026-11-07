@@ -1,12 +1,479 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Motorola 68000 Emulator</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' };</script>
+<style>
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .cell { padding: 0 .35rem; }
+  .diff { background: rgba(185, 28, 28, .55); }
+  .wr { background: rgba(202, 138, 4, .45); }
+  .cur { background: rgba(30, 64, 175, .55); }
+  .flag-on { background: #166534; color: #fff; }
+  .flag-off { background: #374151; color: #9ca3af; }
+</style>
 </head>
-<body>
-<h1>Motorola 68000 Emulator</h1>
-<p>Front end under construction (E13-06).</p>
+<body class="bg-gray-900 text-gray-100 text-xs">
+<header class="flex flex-wrap items-center gap-3 p-2 bg-gray-800 border-b border-gray-700">
+  <h1 class="text-base font-bold">Motorola 68000 Emulator</h1>
+  <span id="conn" class="px-2 rounded bg-red-800" data-i18n="offline">offline</span>
+  <span class="text-gray-400" id="ver"></span>
+  <span class="flex-1"></span>
+  <button id="lang" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">FR / EN</button>
+</header>
+
+<main class="p-2 grid gap-2 grid-cols-1 lg:grid-cols-3">
+
+  <section class="bg-gray-800 rounded p-2 lg:col-span-3">
+    <h2 class="font-bold mb-1" data-i18n="controls">Controls</h2>
+    <div class="flex flex-wrap items-center gap-2">
+      <button id="b-run" class="px-2 py-1 rounded bg-green-700 hover:bg-green-600" data-i18n="run">Run</button>
+      <button id="b-pause" class="px-2 py-1 rounded bg-yellow-700 hover:bg-yellow-600" data-i18n="pause">Pause</button>
+      <button id="b-step" class="px-2 py-1 rounded bg-blue-700 hover:bg-blue-600" data-i18n="step">Step</button>
+      <input id="n-step" type="number" min="1" value="1" class="w-20 bg-gray-700 rounded px-1">
+      <button id="b-clock" class="px-2 py-1 rounded bg-blue-700 hover:bg-blue-600" data-i18n="step_clock">Clock step</button>
+      <input id="n-clock" type="number" min="1" value="1" class="w-20 bg-gray-700 rounded px-1">
+      <button id="b-reset" class="px-2 py-1 rounded bg-red-700 hover:bg-red-600" data-i18n="reset">Reset</button>
+      <label class="flex items-center gap-1"><span data-i18n="speed">Speed</span>
+        <select id="speed" class="bg-gray-700 rounded px-1"></select></label>
+      <span class="flex-1"></span>
+      <span><span data-i18n="status">Status</span>: <b id="st-status">-</b></span>
+      <span><span data-i18n="instrs">Instr.</span>: <b id="st-instrs">0</b></span>
+      <span><span data-i18n="clocks">Clocks</span>: <b id="st-clocks">0</b></span>
+      <span id="st-ips">0</span> ips
+      <span id="st-mhz">0</span> MHz
+    </div>
+    <div class="flex flex-wrap items-center gap-2 mt-2">
+      <label class="flex items-center gap-1"><span data-i18n="binary">Binary</span>
+        <select id="roms" class="bg-gray-700 rounded px-1 min-w-[10rem]"></select></label>
+      <button id="b-load" class="px-2 py-1 rounded bg-indigo-700 hover:bg-indigo-600" data-i18n="load">Load</button>
+      <button id="b-roms" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600" data-i18n="refresh">Refresh</button>
+      <label class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 cursor-pointer"><span data-i18n="upload">Upload</span>
+        <input id="file" type="file" class="hidden"></label>
+      <div id="drop" class="flex-1 min-w-[12rem] border border-dashed border-gray-500 rounded px-2 py-1 text-center text-gray-400" data-i18n="drop">Drop a .bin file here</div>
+      <span><span data-i18n="rom">ROM</span>: <b id="rom">-</b></span>
+    </div>
+  </section>
+
+  <section class="bg-gray-800 rounded p-2">
+    <h2 class="font-bold mb-1" data-i18n="registers">Registers</h2>
+    <div id="regs" class="grid grid-cols-2 gap-x-3"></div>
+    <div class="mt-1">SR <b id="r-sr"></b> <span id="flags" class="inline-flex gap-1"></span> IPL <b id="r-imask"></b></div>
+    <div class="mt-1">USP <b id="r-usp"></b> SSP <b id="r-ssp"></b></div>
+    <div class="mt-1">PC <b id="r-pc"></b> IR <b id="r-ir"></b> IRC <b id="r-irc"></b></div>
+  </section>
+
+  <section class="bg-gray-800 rounded p-2 lg:col-span-2">
+    <h2 class="font-bold mb-1" data-i18n="disasm">Disassembly</h2>
+    <table class="w-full"><tbody id="dis"></tbody></table>
+    <div class="mt-2 flex flex-wrap items-center gap-2">
+      <span data-i18n="breakpoints">Breakpoints</span>:
+      <span id="bps"></span>
+      <input id="bp-addr" class="w-24 bg-gray-700 rounded px-1" placeholder="$000100">
+      <button id="b-bp" class="px-2 rounded bg-gray-700 hover:bg-gray-600" data-i18n="add">Add</button>
+    </div>
+  </section>
+
+  <section class="bg-gray-800 rounded p-2 lg:col-span-2">
+    <h2 class="font-bold mb-1" data-i18n="memory">Memory</h2>
+    <div class="flex flex-wrap items-center gap-2 mb-1">
+      <label class="flex items-center gap-1"><span data-i18n="follow">Follow</span>
+        <select id="follow" class="bg-gray-700 rounded px-1">
+          <option value="pc">PC</option><option value="sp">SP</option>
+          <option value="an0">A0</option><option value="an1">A1</option><option value="an2">A2</option>
+          <option value="an3">A3</option><option value="an4">A4</option><option value="an5">A5</option>
+          <option value="an6">A6</option><option value="man">manual</option>
+        </select></label>
+      <input id="mem-base" class="w-24 bg-gray-700 rounded px-1" placeholder="$000000">
+      <button id="b-mem" class="px-2 rounded bg-gray-700 hover:bg-gray-600" data-i18n="go">Go</button>
+    </div>
+    <pre id="mem" class="leading-4"></pre>
+  </section>
+
+  <section class="bg-gray-800 rounded p-2">
+    <h2 class="font-bold mb-1" data-i18n="stack">Stack</h2>
+    <table class="w-full"><tbody id="stack"></tbody></table>
+  </section>
+
+  <section class="bg-gray-800 rounded p-2">
+    <h2 class="font-bold mb-1" data-i18n="trace">Trace</h2>
+    <table class="w-full"><tbody id="trace"></tbody></table>
+  </section>
+
+  <section class="bg-gray-800 rounded p-2 lg:col-span-2">
+    <h2 class="font-bold mb-1" data-i18n="buslog">Bus cycles</h2>
+    <div class="mb-1 text-gray-400"><span data-i18n="lastbus">Last cycle</span>: <span id="bus"></span></div>
+    <table class="w-full">
+      <thead><tr class="text-gray-400 text-left">
+        <th class="cell">#</th><th class="cell">kind</th><th class="cell">addr</th><th class="cell">data</th>
+        <th class="cell">fc</th><th class="cell">uds</th><th class="cell">lds</th><th class="cell">clk</th></tr></thead>
+      <tbody id="buslog"></tbody>
+    </table>
+  </section>
+
+  <section class="bg-gray-800 rounded p-2">
+    <div class="flex items-center gap-2 mb-1">
+      <h2 class="font-bold" data-i18n="console">Console</h2>
+      <button id="b-cclear" class="px-2 rounded bg-gray-700 hover:bg-gray-600" data-i18n="clear">Clear</button>
+    </div>
+    <pre id="console" class="h-40 overflow-auto bg-black rounded p-1"></pre>
+  </section>
+
+  <section class="bg-gray-800 rounded p-2 lg:col-span-3">
+    <h2 class="font-bold mb-1" data-i18n="sst">SingleStepTests</h2>
+    <div class="flex flex-wrap items-center gap-2 mb-2">
+      <button id="b-sstlist" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600" data-i18n="refresh">Refresh</button>
+      <select id="sst-stem" class="bg-gray-700 rounded px-1 min-w-[10rem]"></select>
+      <label class="flex items-center gap-1"><span data-i18n="test_no">Test</span>
+        <input id="sst-idx" type="number" min="0" value="0" class="w-24 bg-gray-700 rounded px-1"></label>
+      <button id="b-sstload" class="px-2 py-1 rounded bg-indigo-700 hover:bg-indigo-600" data-i18n="load">Load</button>
+      <span id="sst-name" class="text-gray-300"></span>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+      <div><h3 class="text-gray-400" data-i18n="expected">Expected</h3>
+        <table class="w-full"><tbody id="sst-exp"></tbody></table></div>
+      <div><h3 class="text-gray-400" data-i18n="actual">Actual</h3>
+        <table class="w-full"><tbody id="sst-act"></tbody></table></div>
+    </div>
+  </section>
+</main>
+
+<div id="err" class="fixed bottom-2 right-2 max-w-md bg-red-900 text-red-100 rounded px-3 py-2 hidden"></div>
+
+<script>
+// All values shown here come from the server: this page does not compute anything about the CPU.
+const I18N = {
+  fr: {
+    offline: "hors ligne",
+    online: "connecté",
+    controls: "Commandes",
+    run: "Lancer",
+    pause: "Pause",
+    step: "Pas",
+    step_clock: "Pas d'horloge",
+    reset: "Réinitialiser",
+    speed: "Vitesse",
+    status: "État",
+    instrs: "Instr.",
+    clocks: "Horloges",
+    binary: "Binaire",
+    load: "Charger",
+    refresh: "Actualiser",
+    upload: "Envoyer",
+    drop: "Déposez un fichier .bin ici",
+    rom: "ROM",
+    registers: "Registres",
+    disasm: "Désassembleur",
+    breakpoints: "Points d'arrêt",
+    add: "Ajouter",
+    memory: "Mémoire",
+    follow: "Suivre",
+    go: "Aller",
+    stack: "Pile",
+    trace: "Trace",
+    buslog: "Cycles de bus",
+    lastbus: "Dernier cycle",
+    console: "Console",
+    clear: "Vider",
+    sst: "SingleStepTests",
+    test_no: "Test",
+    expected: "Attendu",
+    actual: "Obtenu",
+    turbo: "turbo",
+    error: "Erreur"
+  },
+  en: {
+    offline: "offline",
+    online: "connected",
+    controls: "Controls",
+    run: "Run",
+    pause: "Pause",
+    step: "Step",
+    step_clock: "Clock step",
+    reset: "Reset",
+    speed: "Speed",
+    status: "Status",
+    instrs: "Instr.",
+    clocks: "Clocks",
+    binary: "Binary",
+    load: "Load",
+    refresh: "Refresh",
+    upload: "Upload",
+    drop: "Drop a .bin file here",
+    rom: "ROM",
+    registers: "Registers",
+    disasm: "Disassembly",
+    breakpoints: "Breakpoints",
+    add: "Add",
+    memory: "Memory",
+    follow: "Follow",
+    go: "Go",
+    stack: "Stack",
+    trace: "Trace",
+    buslog: "Bus cycles",
+    lastbus: "Last cycle",
+    console: "Console",
+    clear: "Clear",
+    sst: "SingleStepTests",
+    test_no: "Test",
+    expected: "Expected",
+    actual: "Actual",
+    turbo: "turbo",
+    error: "Error"
+  }
+};
+const SPEED_LABELS = ["1", "4", "15", "60", "300", "3000", "60000", "turbo"];
+const $ = (id) => document.getElementById(id);
+let lang = 'en';
+try { lang = localStorage.getItem('lang') || (navigator.language || 'en').slice(0, 2); } catch (e) { /* no storage */ }
+if (!I18N[lang]) lang = 'en';
+const t = (k) => (I18N[lang] && I18N[lang][k]) || k;
+
+function applyLang() {
+  document.documentElement.lang = lang;
+  document.querySelectorAll('[data-i18n]').forEach((el) => { el.textContent = t(el.getAttribute('data-i18n')); });
+  const opts = $('speed').options;
+  for (let i = 0; i < opts.length; i++) opts[i].textContent = i === 7 ? t('turbo') : SPEED_LABELS[i];
+  try { localStorage.setItem('lang', lang); } catch (e) { /* no storage */ }
+}
+$('lang').onclick = () => { lang = lang === 'fr' ? 'en' : 'fr'; applyLang(); setConn(ws && ws.readyState === 1); };
+
+const hx = (v, n) => '$' + Number(v).toString(16).toUpperCase().padStart(n, '0');
+const clear = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
+function td(text, cls) { const c = document.createElement('td'); c.className = 'cell ' + (cls || ''); c.textContent = text; return c; }
+function tr(cells, cls) { const r = document.createElement('tr'); if (cls) r.className = cls; cells.forEach((c) => r.appendChild(c)); return r; }
+
+let ws = null;
+let last = null;
+let consoleText = '';
+let sstFiles = [];
+
+function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+
+function setConn(on) {
+  const c = $('conn');
+  c.textContent = t(on ? 'online' : 'offline');
+  c.className = 'px-2 rounded ' + (on ? 'bg-green-800' : 'bg-red-800');
+}
+
+function showError(msg) {
+  const e = $('err');
+  e.textContent = t('error') + ': ' + msg;
+  e.classList.remove('hidden');
+  clearTimeout(showError.timer);
+  showError.timer = setTimeout(() => e.classList.add('hidden'), 6000);
+}
+
+function connect() {
+  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  ws.onopen = () => { setConn(true); send({ cmd: 'hello' }); send({ cmd: 'sst_list' }); };
+  ws.onclose = () => { setConn(false); setTimeout(connect, 1000); };
+  ws.onmessage = (ev) => {
+    let m;
+    try { m = JSON.parse(ev.data); } catch (e) { return; }
+    if (m.type === 'hello') $('ver').textContent = 'v' + m.version;
+    else if (m.type === 'roms') showRoms(m.roms || []);
+    else if (m.type === 'sst_files') showSstFiles(m.files || []);
+    else if (m.type === 'state') showState(m);
+    else if (m.type === 'sst_test') showSst(m);
+    else if (m.type === 'error') showError(m.message || '');
+  };
+}
+
+function showRoms(roms) {
+  const sel = $('roms');
+  const cur = sel.value;
+  clear(sel);
+  roms.forEach((r) => {
+    const o = document.createElement('option');
+    o.value = r.name;
+    o.textContent = r.name + ' (' + r.size + ')';
+    sel.appendChild(o);
+  });
+  if (cur) sel.value = cur;
+}
+
+function showSstFiles(files) {
+  sstFiles = files;
+  const sel = $('sst-stem');
+  const cur = sel.value;
+  clear(sel);
+  files.forEach((f) => {
+    const o = document.createElement('option');
+    o.value = f.stem;
+    o.textContent = f.stem + ' (' + f.tests + ')';
+    sel.appendChild(o);
+  });
+  if (cur) sel.value = cur;
+}
+
+function showState(s) {
+  last = s;
+  $('st-status').textContent = s.status;
+  $('st-instrs').textContent = s.instrs;
+  $('st-clocks').textContent = s.clocks;
+  $('st-ips').textContent = Math.round(s.ips);
+  $('st-mhz').textContent = Number(s.mhz).toFixed(2);
+  $('rom').textContent = s.rom ? s.rom.name + ' (' + s.rom.size + ')' : '-';
+  const r = s.regs;
+  const box = $('regs');
+  clear(box);
+  for (let i = 0; i < 8; i++) {
+    const d = document.createElement('div');
+    d.textContent = 'D' + i + ' ' + hx(r.d[i], 8);
+    box.appendChild(d);
+    const a = document.createElement('div');
+    a.textContent = (i === 7 ? 'SP' : 'A' + i) + ' ' + hx(r.a[i], 8);
+    box.appendChild(a);
+  }
+  $('r-sr').textContent = hx(r.sr, 4);
+  $('r-imask').textContent = r.imask;
+  $('r-usp').textContent = hx(r.usp, 8);
+  $('r-ssp').textContent = hx(r.ssp, 8);
+  $('r-pc').textContent = hx(r.pc, 6);
+  $('r-ir').textContent = hx(r.ir, 4);
+  $('r-irc').textContent = hx(r.irc, 4);
+  const fl = $('flags');
+  clear(fl);
+  [['X', r.x], ['N', r.n], ['Z', r.z], ['V', r.v], ['C', r.c], ['S', r.s], ['T', r.t]].forEach(([n, v]) => {
+    const f = document.createElement('span');
+    f.className = 'px-1 rounded ' + (v ? 'flag-on' : 'flag-off');
+    f.textContent = n;
+    fl.appendChild(f);
+  });
+  showDis(s);
+  showMem(s);
+  const st = $('stack');
+  clear(st);
+  (s.stack || []).forEach((e, i) => st.appendChild(tr([td(hx(e.addr, 6) + (i === 0 ? ' <' : '')), td(hx(e.word, 4))])));
+  const trc = $('trace');
+  clear(trc);
+  (s.trace || []).forEach((e) => trc.appendChild(tr([td(hx(e.pc, 6)), td(e.text)])));
+  showBus(s);
+  if (s.console_delta) {
+    consoleText += s.console_delta;
+    $('console').textContent = consoleText;
+    $('console').scrollTop = $('console').scrollHeight;
+  }
+}
+
+function showDis(s) {
+  const body = $('dis');
+  clear(body);
+  const bps = s.bps || [];
+  (s.dis || []).forEach((row, i) => {
+    const isBp = bps.indexOf(row.addr) >= 0;
+    const addr = td((isBp ? '* ' : '  ') + hx(row.addr, 6), 'cursor-pointer');
+    addr.onclick = () => send({ cmd: isBp ? 'bp_del' : 'bp_add', addr: row.addr });
+    const words = td((row.words || []).map((w) => hx(w, 4).slice(1)).join(' '), 'text-gray-400');
+    body.appendChild(tr([addr, words, td(row.text)], i === 0 ? 'cur' : ''));
+  });
+  const list = $('bps');
+  clear(list);
+  bps.forEach((a) => {
+    const b = document.createElement('button');
+    b.className = 'px-1 mr-1 rounded bg-gray-700 hover:bg-red-700';
+    b.textContent = hx(a, 6) + ' x';
+    b.onclick = () => send({ cmd: 'bp_del', addr: a });
+    list.appendChild(b);
+  });
+}
+
+function showMem(s) {
+  const m = s.mem;
+  if (!m) return;
+  const written = {};
+  (s.wlog || []).forEach((a) => { written[a] = true; written[a + 1] = true; });
+  const pre = $('mem');
+  clear(pre);
+  const hex = m.hex || '';
+  for (let off = 0; off < hex.length / 2; off += 16) {
+    const line = document.createElement('div');
+    line.appendChild(document.createTextNode(hx(m.base + off, 6) + '  '));
+    let ascii = '';
+    for (let i = 0; i < 16 && (off + i) * 2 < hex.length; i++) {
+      const v = parseInt(hex.substr((off + i) * 2, 2), 16);
+      const sp = document.createElement('span');
+      sp.textContent = hex.substr((off + i) * 2, 2).toUpperCase() + ' ';
+      if (written[m.base + off + i]) sp.className = 'wr';
+      line.appendChild(sp);
+      ascii += v >= 32 && v < 127 ? String.fromCharCode(v) : '.';
+    }
+    line.appendChild(document.createTextNode(' ' + ascii));
+    pre.appendChild(line);
+  }
+}
+
+function showBus(s) {
+  const b = s.bus;
+  $('bus').textContent = b
+    ? b.kind + ' ' + hx(b.addr, 6) + ' ' + hx(b.data, 4) + ' fc' + b.fc + ' uds' + b.uds + ' lds' + b.lds + ' ' + b.clocks + 'clk ' + (b.pins || '')
+    : '-';
+  const body = $('buslog');
+  clear(body);
+  (s.buslog || []).forEach((e, i) => body.appendChild(tr([
+    td(i), td(e.kind), td(hx(e.addr, 6)), td(hx(e.data, 4)), td(e.fc), td(e.uds), td(e.lds), td(e.clocks)
+  ])));
+}
+
+function showSst(m) {
+  $('sst-name').textContent = m.name + ' #' + m.index;
+  const diff = m.diff || [];
+  const fill = (id, rows) => {
+    const body = $(id);
+    clear(body);
+    const n = Math.max((m.expected || []).length, (m.actual || []).length);
+    for (let i = 0; i < n; i++) {
+      const e = rows[i];
+      const cells = e
+        ? [td(i), td(e.kind), td(e.cycles), td('fc' + e.fc), td(hx(e.addr, 6)), td(hx(e.data, 4)), td(e.uds + '/' + e.lds)]
+        : [td(i), td('-'), td(''), td(''), td(''), td(''), td('')];
+      body.appendChild(tr(cells, diff.indexOf(i) >= 0 ? 'diff' : ''));
+    }
+  };
+  fill('sst-exp', m.expected || []);
+  fill('sst-act', m.actual || []);
+}
+
+function upload(file) {
+  const rd = new FileReader();
+  rd.onload = () => {
+    const bytes = new Uint8Array(rd.result);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+    send({ cmd: 'upload', name: file.name, data_b64: btoa(bin) });
+  };
+  rd.readAsArrayBuffer(file);
+}
+
+(function init() {
+  const sp = $('speed');
+  SPEED_LABELS.forEach((l, i) => { const o = document.createElement('option'); o.value = i; o.textContent = l; sp.appendChild(o); });
+  sp.value = '5';
+  sp.onchange = () => send({ cmd: 'speed', idx: Number(sp.value) });
+  $('b-run').onclick = () => send({ cmd: 'run' });
+  $('b-pause').onclick = () => send({ cmd: 'pause' });
+  $('b-step').onclick = () => send({ cmd: 'step', n: Number($('n-step').value) || 1 });
+  $('b-clock').onclick = () => send({ cmd: 'step_clock', n: Number($('n-clock').value) || 1 });
+  $('b-reset').onclick = () => send({ cmd: 'reset' });
+  $('b-load').onclick = () => { if ($('roms').value) send({ cmd: 'load', name: $('roms').value }); };
+  $('b-roms').onclick = () => send({ cmd: 'list_roms' });
+  $('file').onchange = (ev) => { if (ev.target.files[0]) upload(ev.target.files[0]); };
+  const drop = $('drop');
+  drop.ondragover = (ev) => { ev.preventDefault(); };
+  drop.ondrop = (ev) => { ev.preventDefault(); if (ev.dataTransfer.files[0]) upload(ev.dataTransfer.files[0]); };
+  $('b-bp').onclick = () => { if ($('bp-addr').value) send({ cmd: 'bp_add', addr: $('bp-addr').value }); };
+  $('follow').onchange = () => send({ cmd: 'view', follow: $('follow').value });
+  $('b-mem').onclick = () => { $('follow').value = 'man'; send({ cmd: 'view', follow: 'man', mem_base: $('mem-base').value || '0' }); };
+  $('b-cclear').onclick = () => { consoleText = ''; $('console').textContent = ''; send({ cmd: 'console_clear' }); };
+  $('b-sstlist').onclick = () => send({ cmd: 'sst_list' });
+  $('b-sstload').onclick = () => { if ($('sst-stem').value) send({ cmd: 'sst_load', stem: $('sst-stem').value, index: Number($('sst-idx').value) || 0 }); };
+  applyLang();
+  connect();
+})();
+</script>
 </body>
 </html>
