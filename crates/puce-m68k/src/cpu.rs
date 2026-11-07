@@ -4,6 +4,8 @@ use crate::bus::Bus;
 use crate::engine::plan::Plan;
 use crate::engine::Engine;
 use crate::pins::Pins;
+#[cfg(feature = "inspect")]
+use crate::probe::BusEvent;
 use crate::regs::Regs;
 use crate::state::CpuState;
 
@@ -123,6 +125,24 @@ impl Cpu {
             }
         }
         bus.on_tick(out);
+    }
+
+    /// Bus events executed since the last `clear_journal` (feature `inspect`).
+    #[cfg(feature = "inspect")]
+    pub fn journal(&self) -> &[BusEvent] {
+        self.engine.journal.as_slice()
+    }
+
+    /// Number of events that did not fit in the journal (feature `inspect`).
+    #[cfg(feature = "inspect")]
+    pub fn journal_overflow(&self) -> u32 {
+        self.engine.journal.overflow()
+    }
+
+    /// Empties the journal and its overflow counter (feature `inspect`).
+    #[cfg(feature = "inspect")]
+    pub fn clear_journal(&mut self) {
+        self.engine.journal.clear();
     }
 
     /// `n` calls of [`Cpu::tick_bus`].

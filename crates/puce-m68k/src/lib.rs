@@ -22,7 +22,8 @@ pub mod state;
 // pub mod alu;
 // pub mod sem;
 // pub mod exception;
-// pub mod probe;
+#[cfg(feature = "inspect")]
+pub mod probe;
 // pub mod disasm;
 
 #[cfg(test)]

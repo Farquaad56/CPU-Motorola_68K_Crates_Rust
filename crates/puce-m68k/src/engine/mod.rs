@@ -8,6 +8,9 @@ use crate::regs::{Regs, S};
 use mcycle::{bus_pins, idle_pins, BusKind};
 use plan::{AddrSrc, Plan, Tok};
 
+#[cfg(feature = "inspect")]
+use crate::probe::{BusEvent, Journal};
+
 /// What the engine does at its next clock.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Cur {
@@ -19,6 +22,9 @@ pub(crate) struct Cur {
     pub(crate) fc: u8,
     pub(crate) uds: bool,
     pub(crate) lds: bool,
+    /// True for the TAS read-modify-write token.
+    #[cfg_attr(not(feature = "inspect"), allow(dead_code))]
+    pub(crate) tas: bool,
     /// Clock inside the current bus cycle (0..=3) for a bus token.
     pub(crate) clock: u8,
 }
@@ -42,6 +48,15 @@ pub(crate) struct Engine {
     clocks: u64,
     /// Last address driven on the bus.
     last_addr: u32,
+    /// Bus journal (feature inspect).
+    #[cfg(feature = "inspect")]
+    pub(crate) journal: Journal,
+    /// Clocks of the bus cycle in progress, waits included.
+    #[cfg(feature = "inspect")]
+    cyc_clocks: u32,
+    /// Internal clocks not yet written to the journal.
+    #[cfg(feature = "inspect")]
+    idle_acc: u32,
 }
 
 impl Engine {
@@ -52,6 +67,12 @@ impl Engine {
             clk: 0,
             clocks: 0,
             last_addr: 0,
+            #[cfg(feature = "inspect")]
+            journal: Journal::new(),
+            #[cfg(feature = "inspect")]
+            cyc_clocks: 0,
+            #[cfg(feature = "inspect")]
+            idle_acc: 0,
         }
     }
 
@@ -59,6 +80,11 @@ impl Engine {
         self.plan = plan;
         self.idx = 0;
         self.clk = 0;
+        #[cfg(feature = "inspect")]
+        {
+            self.cyc_clocks = 0;
+            self.idle_acc = 0;
+        }
         self.skip_hooks();
     }
 
@@ -85,6 +111,15 @@ impl Engine {
         self.idx += 1;
         self.clk = 0;
         self.skip_hooks();
+        // Consecutive internal cycles merge into one idle event.
+        #[cfg(feature = "inspect")]
+        if self.idle_acc > 0 && !matches!(self.plan.get(self.idx), Some(Tok::N(_))) {
+            self.journal.push(BusEvent {
+                clocks: self.idle_acc,
+                ..BusEvent::default()
+            });
+            self.idle_acc = 0;
+        }
     }
 
     /// Describes the next clock, or `None` when the plan is finished.
@@ -102,6 +137,7 @@ impl Engine {
                     fc: fc_data,
                     uds: false,
                     lds: false,
+                    tas: false,
                     clock: self.clk,
                 });
             }
@@ -135,6 +171,7 @@ impl Engine {
             fc,
             uds,
             lds,
+            tas: matches!(tok, Tok::Tas(_)),
             clock: self.clk % 4,
         })
     }
@@ -148,6 +185,10 @@ impl Engine {
         };
         let Some(kind) = cur.kind else {
             let out = idle_pins(cur.fc, self.last_addr);
+            #[cfg(feature = "inspect")]
+            {
+                self.idle_acc += 1;
+            }
             self.clk += 1;
             if self.clk >= cur.len {
                 self.advance_token();
@@ -158,6 +199,29 @@ impl Engine {
         let wait = cur.clock == 2 && !pins.dtack();
         let out = bus_pins(kind, cur.clock, cur.addr, cur.fc, cur.uds, cur.lds, 0);
         self.last_addr = cur.addr;
+        #[cfg(feature = "inspect")]
+        {
+            self.cyc_clocks += 1;
+            if cur.clock == 3 && !wait {
+                let write = cur.is_write();
+                self.journal.push(BusEvent {
+                    kind: if cur.tas {
+                        3
+                    } else if write {
+                        1
+                    } else {
+                        2
+                    },
+                    clocks: self.cyc_clocks,
+                    fc: cur.fc,
+                    addr: cur.addr,
+                    data: if write { out.data() } else { pins.data() },
+                    uds: cur.uds,
+                    lds: cur.lds,
+                });
+                self.cyc_clocks = 0;
+            }
+        }
         if !wait {
             self.clk += 1;
             if self.clk >= cur.len {
