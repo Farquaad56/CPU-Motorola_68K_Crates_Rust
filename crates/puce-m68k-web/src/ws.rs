@@ -365,10 +365,14 @@ mod tests {
     }
 
     fn start(tag: &str) -> Srv {
+        start_sst(tag, PathBuf::from("none"))
+    }
+
+    fn start_sst(tag: &str, sst: PathBuf) -> Srv {
         let l = http::bind(0).unwrap();
         let addr = http::local_addr(&l).unwrap();
         let stop = Arc::new(AtomicBool::new(false));
-        let ws = handler(rom_dir(tag), PathBuf::from("none"), Arc::clone(&stop));
+        let ws = handler(rom_dir(tag), sst, Arc::clone(&stop));
         let st2 = Arc::clone(&stop);
         let h = std::thread::spawn(move || http::serve(&l, &st2, &ws));
         Srv {
@@ -489,5 +493,122 @@ mod tests {
             })
         );
         assert!(parse_command("{\"cmd\":\"upload\",\"name\":\"a\",\"data_b64\":\"!!\"}").is_err());
+    }
+
+    /// Messages until one of type `want` (the others are dropped).
+    fn until(c: &mut Client, want: &str) -> String {
+        loop {
+            let m = next(c);
+            if ty(&m) == want {
+                return m;
+            }
+        }
+    }
+
+    #[test]
+    fn e13_05_list_roms() {
+        let s = start("list");
+        let mut c = connect(&s);
+        c.send(Message::text("{\"cmd\":\"list_roms\"}")).unwrap();
+        let m = next(&mut c);
+        assert_eq!(ty(&m), "roms");
+        assert!(m.contains("{\"name\":\"loop.bin\",\"size\":258}"), "{m}");
+    }
+
+    #[test]
+    fn e13_05_load_unknown() {
+        let s = start("unk_rom");
+        let mut c = connect(&s);
+        for name in ["nope.bin", "../x.bin", "/etc/passwd"] {
+            c.send(Message::text(format!(
+                "{{\"cmd\":\"load\",\"name\":\"{name}\"}}"
+            )))
+            .unwrap();
+            let m = next(&mut c);
+            assert_eq!(ty(&m), "error", "{name}: {m}");
+        }
+        c.send(Message::text("{\"cmd\":\"load\",\"name\":\"loop.bin\"}"))
+            .unwrap();
+        let m = next(&mut c);
+        assert_eq!(ty(&m), "state");
+        assert!(
+            m.contains("\"rom\":{\"name\":\"loop.bin\",\"size\":258}"),
+            "{m}"
+        );
+    }
+
+    #[test]
+    fn e13_05_upload_b64() {
+        use base64::Engine;
+        let s = start("upload");
+        let mut c = connect(&s);
+        // SSP 0x2000, PC 0x100, `moveq #7,d3` at 0x100
+        let mut img = vec![0u8; 0x100];
+        img[2] = 0x20;
+        img[6] = 0x01;
+        img.extend_from_slice(&[0x76, 0x07]);
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&img);
+        c.send(Message::text(format!(
+            "{{\"cmd\":\"upload\",\"name\":\"dir/up.bin\",\"data_b64\":\"{b64}\"}}"
+        )))
+        .unwrap();
+        let m = next(&mut c);
+        assert_eq!(ty(&m), "state");
+        assert!(
+            m.contains("\"rom\":{\"name\":\"up.bin\",\"size\":258}"),
+            "{m}"
+        );
+        c.send(Message::text("{\"cmd\":\"step\"}")).unwrap();
+        let m = next(&mut c);
+        assert!(m.contains("\"d\":[0,0,0,7,"), "{m}");
+    }
+
+    #[test]
+    fn e13_05_sst_list() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/singlestep");
+        if !std::path::Path::new(dir).join("NOP.json.bin").exists() {
+            return;
+        }
+        let s = start_sst("sstl", PathBuf::from(dir));
+        let mut c = connect(&s);
+        c.send(Message::text("{\"cmd\":\"sst_list\"}")).unwrap();
+        let m = next(&mut c);
+        assert_eq!(ty(&m), "sst_files");
+        assert!(m.contains("{\"stem\":\"NOP\",\"tests\":2500}"), "{m}");
+    }
+
+    #[test]
+    fn e13_05_sst_load_diff() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/singlestep");
+        if !std::path::Path::new(dir).join("NOP.json.bin").exists() {
+            return;
+        }
+        let s = start_sst("sstd", PathBuf::from(dir));
+        let mut c = connect(&s);
+        c.send(Message::text(
+            "{\"cmd\":\"sst_load\",\"stem\":\"NOP\",\"index\":3}",
+        ))
+        .unwrap();
+        let m = until(&mut c, "sst_test");
+        assert!(m.contains("NOP 4e71"), "{m}");
+        // nothing executed yet: every expected transaction differs
+        assert!(
+            m.contains("\"actual\":[]") && m.contains("\"diff\":[0]"),
+            "{m}"
+        );
+        c.send(Message::text("{\"cmd\":\"step\"}")).unwrap();
+        let m = until(&mut c, "sst_test");
+        assert!(m.contains("\"diff\":[]"), "{m}");
+        assert!(!m.contains("\"actual\":[]"), "{m}");
+        c.send(Message::text(
+            "{\"cmd\":\"sst_load\",\"stem\":\"NOP\",\"index\":99999}",
+        ))
+        .unwrap();
+        assert_eq!(ty(&next(&mut c)), "error");
+        c.send(Message::text(
+            "{\"cmd\":\"sst_load\",\"stem\":\"../NOP\",\"index\":0}",
+        ))
+        .unwrap();
+        assert_eq!(ty(&next(&mut c)), "error");
     }
 }
