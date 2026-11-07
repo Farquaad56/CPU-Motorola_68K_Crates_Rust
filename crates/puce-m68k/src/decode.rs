@@ -47,9 +47,13 @@ pub const fn build_table(rules: &[Rule]) -> [Decoded; 65536] {
     let mut r = 0;
     while r < rules.len() {
         let rule = rules[r];
-        let mut o: usize = 0;
-        while o < 65536 {
-            if (o as u16) & rule.mask == rule.value {
+        // Enumerate only the opcodes of the rule: every subset `sub` of the bits outside the mask
+        // (a rule whose value has bits outside its mask matches nothing).
+        if rule.value & !rule.mask == 0 {
+            let free = !rule.mask;
+            let mut sub: u16 = 0;
+            loop {
+                let o = (rule.value | sub) as usize;
                 if t[o].id.0 != 0 {
                     panic!("decode: two rules capture the same opcode");
                 }
@@ -57,8 +61,11 @@ pub const fn build_table(rules: &[Rule]) -> [Decoded; 65536] {
                     id: rule.id,
                     variant: rule.variant,
                 };
+                if sub == free {
+                    break;
+                }
+                sub = sub.wrapping_sub(free) & free;
             }
-            o += 1;
         }
         r += 1;
     }
@@ -124,7 +131,7 @@ mod tests {
     #[test]
     fn e05_01_table_size() {
         assert_eq!(TABLE.len(), 65536);
-        assert_eq!(decode(0x1234).id, InsnId::ILLEGAL);
+        assert_eq!(decode(0x0AFC).id, InsnId::ILLEGAL); // EORI, size 11: illegal
     }
 
     #[test]

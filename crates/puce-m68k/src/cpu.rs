@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn e05_05_illegal_no_advance() {
-        let mut cpu = with_ir(0x1234);
+        let mut cpu = with_ir(0x0AFC); // EORI with size 11: illegal on the 68000
         let mut bus = Probe::default();
         assert_eq!(cpu.step(&mut bus), 0);
         assert!(cpu.at_instruction_boundary());
