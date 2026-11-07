@@ -155,10 +155,15 @@ impl Engine {
         }
     }
 
-    fn advance_token(&mut self) {
+    fn advance_token(&mut self, lat: &Latch) {
         self.idx += 1;
         self.clk = 0;
         self.skip_hooks();
+        // A variable idle cycle of length zero (shift by 0) takes no clock.
+        while lat.idle == 0 && matches!(self.plan.get(self.idx), Some(Tok::Nv)) {
+            self.idx += 1;
+            self.skip_hooks();
+        }
         // Consecutive internal cycles merge into one idle event.
         #[cfg(feature = "inspect")]
         if self.idle_acc > 0 && !matches!(self.plan.get(self.idx), Some(Tok::N(_) | Tok::Nv)) {
@@ -262,7 +267,7 @@ impl Engine {
             }
             self.clk += 1;
             if self.clk >= cur.len {
-                self.advance_token();
+                self.advance_token(lat);
             }
             return out;
         };
@@ -338,7 +343,7 @@ impl Engine {
             }
             self.clk += 1;
             if self.clk >= cur.len {
-                self.advance_token();
+                self.advance_token(lat);
             }
         }
         out
