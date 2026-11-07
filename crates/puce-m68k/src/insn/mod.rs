@@ -15,11 +15,13 @@ use crate::engine::plan::Plan;
 pub mod i_add;
 pub mod i_adda;
 pub mod i_addx;
+pub mod i_and;
 pub mod i_clr;
 pub mod i_cmp;
 pub mod i_cmpa;
 pub mod i_divs;
 pub mod i_divu;
+pub mod i_eor;
 pub mod i_exg;
 pub mod i_ext;
 pub mod i_lea;
@@ -33,6 +35,7 @@ pub mod i_muls;
 pub mod i_mulu;
 pub mod i_neg;
 pub mod i_negx;
+pub mod i_or;
 pub mod i_pea;
 pub mod i_sub;
 pub mod i_suba;
@@ -75,6 +78,9 @@ const GROUPS: &[&[Rule]] = &[
     i_muls::RULES,
     i_divu::RULES,
     i_divs::RULES,
+    i_and::RULES,
+    i_or::RULES,
+    i_eor::RULES,
     // @groups
 ];
 
@@ -110,6 +116,9 @@ const GROUPS: &[&[Rule]] = &[
     i_muls::RULES,
     i_divu::RULES,
     i_divs::RULES,
+    i_and::RULES,
+    i_or::RULES,
+    i_eor::RULES,
     // @tgroups
     testing::RULES,
 ];
@@ -187,6 +196,9 @@ pub(crate) fn plan_for(id: InsnId, variant: u8, cpu: &mut Cpu) -> Plan {
         i_muls::ID => i_muls::plan(variant, cpu),
         i_divu::ID => i_divu::plan(variant, cpu),
         i_divs::ID => i_divs::plan(variant, cpu),
+        i_and::ID => i_and::plan(variant, cpu),
+        i_or::ID => i_or::plan(variant, cpu),
+        i_eor::ID => i_eor::plan(variant, cpu),
         // @plans
         #[cfg(test)]
         testing::ID => testing::plan(variant),
@@ -227,6 +239,9 @@ pub(crate) fn run_hook(id: InsnId, k: u8, cpu: &mut Cpu) {
         i_muls::ID => i_muls::hook(k, cpu),
         i_divu::ID => i_divu::hook(k, cpu),
         i_divs::ID => i_divs::hook(k, cpu),
+        i_and::ID => i_and::hook(k, cpu),
+        i_or::ID => i_or::hook(k, cpu),
+        i_eor::ID => i_eor::hook(k, cpu),
         // @hooks
         #[cfg(test)]
         testing::ID => testing::hook(k, cpu),

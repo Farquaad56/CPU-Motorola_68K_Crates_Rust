@@ -148,6 +148,17 @@ pub fn binop_exec(op: Alu, cpu: &mut Cpu) {
             set_dn(cpu, dn, size, r);
         }
         cpu.regs.sr = sr;
+    } else if (ird >> 3) & 7 == 0 {
+        // `EOR Dn,Dm`: register destination
+        let (r, sr) = exec(
+            op,
+            size,
+            cpu.regs.d[dn],
+            cpu.regs.d[reg as usize],
+            cpu.regs.sr,
+        );
+        set_dn(cpu, reg as usize, size, r);
+        cpu.regs.sr = sr;
     } else {
         let (r, sr) = exec(op, size, cpu.regs.d[dn], cpu.lat.val, cpu.regs.sr);
         cpu.lat.val = r;
@@ -1782,6 +1793,132 @@ pub fn div_hook(signed: bool, k: u8, cpu: &mut Cpu) {
         let ird = cpu.lat.ird;
         crate::ea::run_ea_hook(cpu, k, (ird & 7) as u8, Size::Word);
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// AND, OR, EOR (and their immediate forms). Same plans as ADD; EOR also targets a data register.
+// ---------------------------------------------------------------------------------------------
+
+const fn build_eor_dn(s: usize) -> Entry {
+    let mut e = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    e = push(e, Tok::H(HK_BINOP));
+    e = push(e, Tok::Pf);
+    if s == 2 {
+        e = push(e, Tok::N(4));
+    }
+    e
+}
+
+static EOR_DN_PLANS: [Entry; 3] = [build_eor_dn(0), build_eor_dn(1), build_eor_dn(2)];
+
+/// Plan of `AND`, `OR`, `EOR` and their immediate forms.
+pub fn logic_plan(cpu: &Cpu) -> Plan {
+    let ird = cpu.lat.ird;
+    if ird >> 12 != 0 && ird & 0x100 != 0 && (ird >> 3) & 7 == 0 {
+        let e = &EOR_DN_PLANS[size_index(ird)];
+        &e.toks[..e.n]
+    } else {
+        arith_plan(cpu)
+    }
+}
+
+/// Number of rules of `AND` / `OR` (both directions, no address register) with the immediate form.
+pub const N_RULES_AND: usize = 33 + 21 + 24;
+/// Number of rules of `EOR` (`Dn,<ea>` with a register or memory destination) with the immediate form.
+pub const N_RULES_EOR: usize = 24 + 24;
+
+const fn imm_form_rule(imm: u16, s: usize, f: usize, id: InsnId) -> Rule {
+    let (m, v): (u16, u16) = match f {
+        0 => (0x38, 0),
+        1 => (0x38, 2 << 3),
+        2 => (0x38, 3 << 3),
+        3 => (0x38, 4 << 3),
+        4 => (0x38, 5 << 3),
+        5 => (0x38, 6 << 3),
+        6 => (0x3F, 0x38),
+        _ => (0x3F, 0x39),
+    };
+    Rule {
+        mask: 0xFFC0 | m,
+        value: imm | ((s as u16) << 6) | v,
+        id,
+        variant: 2,
+    }
+}
+
+/// Decoding rules of `AND` (0xC000, 0x0200) or `OR` (0x8000, 0x0000).
+pub const fn and_rules(line: u16, imm: u16, id: InsnId) -> [Rule; N_RULES_AND] {
+    let mut out = [Rule {
+        mask: 0,
+        value: 0,
+        id: InsnId::ILLEGAL,
+        variant: 0,
+    }; N_RULES_AND];
+    let both: [Rule; N_RULES_BOTH] = binop_rules(line, id, true);
+    let mut k = 0;
+    let mut j = 0;
+    while j < N_RULES_BOTH {
+        // no address register source (value bits 5-3 == 001 on the `<ea>,Dn` direction)
+        let r = both[j];
+        let is_an = r.variant == 0 && r.value & 0x0138 == 0x0008 && r.mask & 0x3F == 0x38;
+        if !is_an {
+            out[k] = r;
+            k += 1;
+        }
+        j += 1;
+    }
+    let mut s = 0;
+    while s < 3 {
+        let mut f = 0;
+        while f < IMM_FORMS {
+            out[k] = imm_form_rule(imm, s, f, id);
+            k += 1;
+            f += 1;
+        }
+        s += 1;
+    }
+    out
+}
+
+/// Decoding rules of `EOR` (0xB100, 0x0A00): `Dn,<ea>` on every data-alterable destination.
+pub const fn eor_rules(id: InsnId) -> [Rule; N_RULES_EOR] {
+    let mut out = [Rule {
+        mask: 0,
+        value: 0,
+        id: InsnId::ILLEGAL,
+        variant: 0,
+    }; N_RULES_EOR];
+    let mut k = 0;
+    let mut s = 0;
+    while s < 3 {
+        let mut f = 0;
+        while f < IMM_FORMS {
+            let r = imm_form_rule(0xB100, s, f, id);
+            out[k] = Rule {
+                mask: 0xF1C0 | (r.mask & 0x3F),
+                value: r.value,
+                id,
+                variant: 1,
+            };
+            k += 1;
+            f += 1;
+        }
+        s += 1;
+    }
+    let mut s = 0;
+    while s < 3 {
+        let mut f = 0;
+        while f < IMM_FORMS {
+            out[k] = imm_form_rule(0x0A00, s, f, id);
+            k += 1;
+            f += 1;
+        }
+        s += 1;
+    }
+    out
 }
 
 #[cfg(test)]
