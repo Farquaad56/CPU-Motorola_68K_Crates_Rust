@@ -48,6 +48,10 @@ pub(crate) struct Engine {
     clocks: u64,
     /// Last address driven on the bus.
     last_addr: u32,
+    /// Hooks passed over and not yet run by the CPU (FIFO: hp is the next, hn the end).
+    hooks: [u8; 8],
+    hn: u8,
+    hp: u8,
     /// Bus journal (feature inspect).
     #[cfg(feature = "inspect")]
     pub(crate) journal: Journal,
@@ -67,6 +71,9 @@ impl Engine {
             clk: 0,
             clocks: 0,
             last_addr: 0,
+            hooks: [0; 8],
+            hn: 0,
+            hp: 0,
             #[cfg(feature = "inspect")]
             journal: Journal::new(),
             #[cfg(feature = "inspect")]
@@ -80,6 +87,8 @@ impl Engine {
         self.plan = plan;
         self.idx = 0;
         self.clk = 0;
+        self.hn = 0;
+        self.hp = 0;
         #[cfg(feature = "inspect")]
         {
             self.cyc_clocks = 0;
@@ -96,13 +105,35 @@ impl Engine {
         self.clocks
     }
 
-    /// Hooks (`H`) and empty internal cycles take no clock: pass over them.
+    /// Next hook passed over and not yet run (FIFO), if any.
+    pub(crate) fn pop_hook(&mut self) -> Option<u8> {
+        if self.hp < self.hn {
+            let k = self.hooks[self.hp as usize];
+            self.hp += 1;
+            if self.hp == self.hn {
+                self.hp = 0;
+                self.hn = 0;
+            }
+            Some(k)
+        } else {
+            None
+        }
+    }
+
+    /// Hooks (`H`) are queued for the CPU, empty internal cycles dropped: neither takes a clock.
     fn skip_hooks(&mut self) {
         while let Some(t) = self.plan.get(self.idx) {
-            if matches!(t, Tok::H(_) | Tok::N(0)) {
-                self.idx += 1;
-            } else {
-                break;
+            match *t {
+                Tok::H(k) => {
+                    debug_assert!((self.hn as usize) < self.hooks.len(), "too many hooks");
+                    if (self.hn as usize) < self.hooks.len() {
+                        self.hooks[self.hn as usize] = k;
+                        self.hn += 1;
+                    }
+                    self.idx += 1;
+                }
+                Tok::N(0) => self.idx += 1,
+                _ => break,
             }
         }
     }

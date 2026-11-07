@@ -1,8 +1,10 @@
 //! The CPU: architectural registers plus the micro-cycle engine.
 
 use crate::bus::Bus;
+use crate::decode::{decode, Decoded, InsnId};
 use crate::engine::plan::Plan;
 use crate::engine::Engine;
+use crate::insn;
 use crate::pins::Pins;
 #[cfg(feature = "inspect")]
 use crate::probe::BusEvent;
@@ -15,6 +17,8 @@ pub struct Cpu {
     /// Architectural registers.
     pub regs: Regs,
     engine: Engine,
+    /// Instruction being executed (owner of the hooks of the running plan).
+    cur: Decoded,
     /// Wait clocks still to insert in the current bus cycle (`tick_bus` only).
     waits: u8,
 }
@@ -40,6 +44,10 @@ impl Cpu {
                 irc: 0,
             },
             engine: Engine::new(),
+            cur: Decoded {
+                id: InsnId::ILLEGAL,
+                variant: 0,
+            },
             waits: 0,
         }
     }
@@ -48,11 +56,49 @@ impl Cpu {
     #[allow(dead_code)] // used by the tests, then by the decoder (E05)
     pub(crate) fn start_plan(&mut self, plan: Plan) {
         self.engine.start(plan);
+        self.run_hooks();
+    }
+
+    /// Runs the hooks the engine has passed over, in order (they take no clock).
+    fn run_hooks(&mut self) {
+        while let Some(k) = self.engine.pop_hook() {
+            insn::run_hook(self.cur.id, k, self);
+        }
+    }
+
+    /// Decodes IR and loads the plan of the instruction.
+    ///
+    /// An opcode that decodes to ILLEGAL starts nothing: the CPU stays at the instruction
+    /// boundary and step returns 0. Illegal-instruction exceptions come with E11; until then the
+    /// event is not journaled either (the journal has no kind for it).
+    fn begin_instruction(&mut self) {
+        self.cur = decode(self.regs.ir);
+        if self.cur.id == InsnId::ILLEGAL {
+            self.engine.start(&[]);
+            return;
+        }
+        let plan = insn::plan_for(self.cur.id, self.cur.variant, self);
+        self.start_plan(plan);
+    }
+
+    /// Executes up to the next instruction boundary and returns the clocks consumed, wait states
+    /// included (0 for an illegal opcode). If a plan is already running it is finished first.
+    pub fn step<B: Bus>(&mut self, bus: &mut B) -> u32 {
+        let start = self.engine.clocks();
+        if self.at_instruction_boundary() {
+            self.begin_instruction();
+        }
+        while !self.at_instruction_boundary() {
+            self.tick_bus(bus);
+        }
+        (self.engine.clocks() - start) as u32
     }
 
     /// Advances one clock. `pins` carries the inputs (DTACK, DATA), the result the outputs.
     pub fn tick(&mut self, pins: Pins) -> Pins {
-        self.engine.step(pins, &mut self.regs)
+        let out = self.engine.step(pins, &mut self.regs);
+        self.run_hooks();
+        out
     }
 
     /// Extension word of the current instruction: IRC, before the `Pf` that consumes it.
@@ -84,6 +130,10 @@ impl Cpu {
             irc: s.prefetch[1],
         };
         self.engine.start(&[]);
+        self.cur = Decoded {
+            id: InsnId::ILLEGAL,
+            variant: 0,
+        };
         self.waits = 0;
     }
 
@@ -415,5 +465,63 @@ mod tests {
             (j[0].kind, j[0].fc, j[0].addr, j[0].data),
             (2, 6, 0x404, 0xCAFE)
         );
+    }
+
+    fn with_ir(ir: u16) -> Cpu {
+        let mut cpu = Cpu::new();
+        let mut st = sample_state();
+        st.prefetch[0] = ir;
+        cpu.load_state(&st);
+        cpu
+    }
+
+    #[test]
+    fn e05_05_illegal_no_advance() {
+        let mut cpu = with_ir(0x1234);
+        let mut bus = Probe::default();
+        assert_eq!(cpu.step(&mut bus), 0);
+        assert!(cpu.at_instruction_boundary());
+        assert_eq!(cpu.regs.pc, 0x404);
+        assert_eq!(bus.ticks, 0);
+    }
+
+    #[test]
+    fn e05_05_test_insn_runs() {
+        let mut cpu = with_ir(crate::insn::testing::OP_HOOKS);
+        let mut bus = Probe::default();
+        assert_eq!(cpu.step(&mut bus), 4);
+        assert_eq!(bus.reads.len(), 1);
+        assert_eq!(cpu.regs.ir, 0x1234);
+    }
+
+    #[test]
+    fn e05_05_boundary() {
+        let mut cpu = with_ir(crate::insn::testing::OP_HOOKS);
+        let mut bus = Probe::default();
+        cpu.step(&mut bus);
+        assert!(cpu.at_instruction_boundary());
+    }
+
+    #[test]
+    fn e05_05_hook_dispatch() {
+        let mut cpu = with_ir(crate::insn::testing::OP_HOOKS);
+        let mut bus = Probe::default();
+        cpu.step(&mut bus);
+        assert_eq!(cpu.regs.d[0], 2, "hook 1 ran once (D0 was 1)");
+        assert_eq!(cpu.regs.d[2], 0x404, "hook 1 ran before the Pf");
+        assert_eq!(cpu.regs.d[1], 0x406, "hook 2 ran after the Pf");
+    }
+
+    #[test]
+    fn e05_05_step_counts_waits() {
+        let mut cpu = with_ir(crate::insn::testing::OP_CLOCKS);
+        let mut bus = Probe {
+            waits: 2,
+            ..Probe::default()
+        };
+        // N(2) + 2 Pf of 4 clocks, each lengthened by 2 wait clocks
+        assert_eq!(cpu.step(&mut bus), 2 + 6 + 6);
+        let mut cpu = with_ir(crate::insn::testing::OP_CLOCKS);
+        assert_eq!(cpu.step(&mut Probe::default()), 10);
     }
 }
