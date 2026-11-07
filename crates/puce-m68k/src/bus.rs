@@ -30,6 +30,15 @@ pub trait Bus {
     fn wait_clocks(&mut self, _addr: u32, _write: bool) -> u8 {
         0
     }
+    /// Interrupt priority level on IPL0-2 sampled at the instruction boundary (0 = none).
+    fn ipl(&mut self) -> u8 {
+        0
+    }
+    /// Interrupt acknowledge cycle (FC = 7) of `level`: the vector number the host supplies, or
+    /// `None` to assert VPA (autovector 24 + level).
+    fn int_ack(&mut self, _level: u8) -> Option<u8> {
+        None
+    }
     /// Called once per clock with the pins the CPU drives (peripheral clocks).
     fn on_tick(&mut self, _pins: Pins) {}
 }

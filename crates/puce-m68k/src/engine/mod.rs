@@ -26,6 +26,10 @@ pub(crate) struct Latch {
     pub(crate) aux2: u32,
     /// Length in clocks of the next `Tok::Nv` internal cycle.
     pub(crate) idle: u8,
+    /// Exception vector number being processed (E11).
+    pub(crate) vec: u8,
+    /// Interrupt level being acknowledged (E11).
+    pub(crate) level: u8,
 }
 
 /// What the engine does at its next clock.
@@ -215,6 +219,7 @@ impl Engine {
             Tok::Ww(a) => (BusKind::Write, 4, a, fc_data, false),
             Tok::Wl(a) => (BusKind::Write, 8, a, fc_data, false),
             Tok::Tas(a) => (BusKind::Read, 4, a, fc_data, true),
+            Tok::Ia => (BusKind::Read, 4, AddrSrc::Ea, 7, true),
         };
         // PC-relative operands are read in program space.
         let fc = if src == AddrSrc::EaProg { fc_prog } else { fc };
@@ -327,7 +332,7 @@ impl Engine {
                         regs.irc = d;
                         regs.pc = regs.pc.wrapping_add(2);
                     }
-                    Some(Tok::Rb(_)) | Some(Tok::Tas(_)) => {
+                    Some(Tok::Rb(_)) | Some(Tok::Tas(_)) | Some(Tok::Ia) => {
                         lat.val = if cur.lds { d & 0xFF } else { d >> 8 } as u32;
                     }
                     Some(Tok::Rw(_)) => lat.val = d as u32,

@@ -13,7 +13,12 @@
 //! | 44 | `DTACK` | in |
 //! | 45..47 | `FC2..FC0` | out |
 //!
-//! Bits 48..53 are reserved for E11 (IPL0-2, VPA, RESET, HALT): do not reuse.
+//! | 48..50 | `IPL0..IPL2` (interrupt level, 0 = none, 7 = NMI) | in |
+//! | 51 | `VPA` | in |
+//! | 52 | `RESET` | in |
+//! | 53 | `HALT` | in/out |
+//!
+//! Bits 54..63 are reserved: do not reuse.
 
 /// Mask of the 24-bit address field (bits 0..23).
 pub const ADDR_MASK: u64 = 0x00FF_FFFF;
@@ -37,6 +42,15 @@ pub const DTACK: u64 = 1 << 44;
 pub const FC_SHIFT: u32 = 45;
 /// Mask of the function code once shifted down.
 pub const FC_MASK: u64 = 0b111;
+
+/// Bit position of the interrupt priority level (bits 48..50).
+pub const IPL_SHIFT: u32 = 48;
+/// Valid Peripheral Address (bit 51): autovector request during an interrupt acknowledge.
+pub const VPA: u64 = 1 << 51;
+/// RESET (bit 52).
+pub const RESET: u64 = 1 << 52;
+/// HALT (bit 53).
+pub const HALT: u64 = 1 << 53;
 
 /// State of the CPU pins.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -170,6 +184,54 @@ impl Pins {
     pub fn set_fc(&mut self, fc: u8) {
         *self = self.with_fc(fc);
     }
+
+    /// Interrupt priority level on IPL0-2 (0..=7).
+    #[inline]
+    pub fn ipl(self) -> u8 {
+        ((self.0 >> IPL_SHIFT) & 7) as u8
+    }
+
+    /// Sets the interrupt priority level (only the low 3 bits are kept).
+    #[inline]
+    pub fn with_ipl(self, level: u8) -> Self {
+        Pins((self.0 & !(7 << IPL_SHIFT)) | ((u64::from(level) & 7) << IPL_SHIFT))
+    }
+
+    /// VPA input.
+    #[inline]
+    pub fn vpa(self) -> bool {
+        self.flag(VPA)
+    }
+
+    /// Sets VPA.
+    #[inline]
+    pub fn with_vpa(self, on: bool) -> Self {
+        self.with_flag(VPA, on)
+    }
+
+    /// RESET input.
+    #[inline]
+    pub fn reset(self) -> bool {
+        self.flag(RESET)
+    }
+
+    /// Sets RESET.
+    #[inline]
+    pub fn with_reset(self, on: bool) -> Self {
+        self.with_flag(RESET, on)
+    }
+
+    /// HALT line.
+    #[inline]
+    pub fn halt(self) -> bool {
+        self.flag(HALT)
+    }
+
+    /// Sets HALT.
+    #[inline]
+    pub fn with_halt(self, on: bool) -> Self {
+        self.with_flag(HALT, on)
+    }
 }
 
 #[cfg(test)]
@@ -226,6 +288,22 @@ mod tests {
         assert_eq!(q.fc(), 6);
         // reserved bits 48..53 are never touched
         assert_eq!(p.0 >> 48, 0);
+    }
+
+    #[test]
+    fn e11_05_ipl_pins() {
+        let p = Pins::default()
+            .with_ipl(5)
+            .with_vpa(true)
+            .with_reset(true)
+            .with_halt(true);
+        assert_eq!(
+            (p.ipl(), p.vpa(), p.reset(), p.halt()),
+            (5, true, true, true)
+        );
+        assert_eq!(p.with_ipl(2).ipl(), 2);
+        assert_eq!(p.addr(), 0);
+        assert_eq!(p.fc(), 0);
     }
 
     #[test]

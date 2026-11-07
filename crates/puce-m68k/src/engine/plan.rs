@@ -51,6 +51,8 @@ pub enum Tok {
     Wl(AddrSrc),
     /// Indivisible read-modify-write cycle of TAS (duration to confirm, spec 12).
     Tas(AddrSrc),
+    /// Interrupt acknowledge cycle (byte read, FC = 7, address set by a hook in `Latch::ea`).
+    Ia,
     /// Calls semantic hook `k` without consuming any clock.
     H(u8),
 }
@@ -64,7 +66,9 @@ impl Tok {
         match self {
             Tok::N(n) => n as u32,
             Tok::Nv => 0,
-            Tok::Pf | Tok::Rb(_) | Tok::Rw(_) | Tok::Wb(_) | Tok::Ww(_) | Tok::Tas(_) => 4,
+            Tok::Pf | Tok::Rb(_) | Tok::Rw(_) | Tok::Wb(_) | Tok::Ww(_) | Tok::Tas(_) | Tok::Ia => {
+                4
+            }
             Tok::Rl(_) | Tok::Wl(_) => 8,
             Tok::H(_) => 0,
         }

@@ -4,6 +4,7 @@ use crate::bus::Bus;
 use crate::decode::{decode, Decoded, InsnId};
 use crate::engine::plan::Plan;
 use crate::engine::{Engine, Latch};
+use crate::exception;
 use crate::insn;
 use crate::pins::Pins;
 #[cfg(feature = "inspect")]
@@ -23,6 +24,10 @@ pub struct Cpu {
     cur: Decoded,
     /// Wait clocks still to insert in the current bus cycle (`tick_bus` only).
     waits: u8,
+    /// Processor halted (double fault); only a reset restarts it.
+    halted: bool,
+    /// An exception sequence is running (a bus fault now is a double fault).
+    in_exception: bool,
 }
 
 impl Default for Cpu {
@@ -53,12 +58,16 @@ impl Cpu {
                 aux: 0,
                 aux2: 0,
                 idle: 0,
+                vec: 0,
+                level: 0,
             },
             cur: Decoded {
                 id: InsnId::ILLEGAL,
                 variant: 0,
             },
             waits: 0,
+            halted: false,
+            in_exception: false,
         }
     }
 
@@ -72,7 +81,11 @@ impl Cpu {
     /// Runs the hooks the engine has passed over, in order (they take no clock).
     fn run_hooks(&mut self) {
         while let Some(k) = self.engine.pop_hook() {
-            insn::run_hook(self.cur.id, k, self);
+            if exception::is_hook(k) {
+                exception::hook(k, self);
+            } else {
+                insn::run_hook(self.cur.id, k, self);
+            }
         }
     }
 
@@ -96,8 +109,14 @@ impl Cpu {
     /// included (0 for an illegal opcode). If a plan is already running it is finished first.
     pub fn step<B: Bus>(&mut self, bus: &mut B) -> u32 {
         let start = self.engine.clocks();
+        if self.halted {
+            return 0;
+        }
         if self.at_instruction_boundary() {
-            self.begin_instruction();
+            let ipl = bus.ipl();
+            if !self.take_interrupt(ipl) {
+                self.begin_instruction();
+            }
         }
         while !self.at_instruction_boundary() {
             self.tick_bus(bus);
@@ -109,7 +128,74 @@ impl Cpu {
     pub fn tick(&mut self, pins: Pins) -> Pins {
         let out = self.engine.step(pins, &mut self.regs, &mut self.lat);
         self.run_hooks();
+        if self.engine.boundary() {
+            self.in_exception = false;
+        }
         out
+    }
+
+    /// Starts the exception sequence of `vector` (group 1 and 2 frame, 34 clocks) at the
+    /// instruction boundary: the PC of the instruction at IR is pushed.
+    pub fn exception(&mut self, vector: u8) {
+        self.lat.vec = vector;
+        self.begin_system_plan(exception::exception_plan());
+    }
+
+    /// Interrupt request of `level` (IPL0-2), sampled at the instruction boundary: taken when
+    /// `level` is above the interrupt mask or is 7. Returns true when the 44-clock interrupt
+    /// sequence has been started.
+    pub fn take_interrupt(&mut self, level: u8) -> bool {
+        let mask = ((self.regs.sr >> 8) & 7) as u8;
+        if self.halted
+            || !self.at_instruction_boundary()
+            || level == 0
+            || (level < 7 && level <= mask)
+        {
+            return false;
+        }
+        self.lat.level = level;
+        self.begin_system_plan(exception::interrupt_plan());
+        true
+    }
+
+    /// Starts the reset sequence (40 clocks): SR = 0x2700, SSP and PC read from vectors 0 and 1.
+    pub fn reset(&mut self) {
+        self.halted = false;
+        self.begin_system_plan(exception::reset_plan());
+    }
+
+    /// True after a double fault (or [`Cpu::halt`]): the CPU runs nothing until [`Cpu::reset`].
+    pub fn is_halted(&self) -> bool {
+        self.halted
+    }
+
+    /// Halts the processor.
+    pub fn halt(&mut self) {
+        self.halted = true;
+        self.engine.start(&[]);
+        self.in_exception = false;
+    }
+
+    /// Reports a bus or address error. During an exception sequence it is a double fault and the
+    /// CPU halts (returns true); otherwise nothing happens here yet (address error frames are
+    /// E11-03, deferred).
+    pub fn bus_fault(&mut self) -> bool {
+        if self.in_exception {
+            self.halt();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn begin_system_plan(&mut self, plan: Plan) {
+        self.cur = Decoded {
+            id: InsnId::ILLEGAL,
+            variant: 0,
+        };
+        self.lat.ird = self.regs.ir;
+        self.in_exception = true;
+        self.start_plan(plan);
     }
 
     /// Extension word of the current instruction: IRC, before the `Pf` that consumes it.
@@ -184,7 +270,13 @@ impl Cpu {
                 dtack = false;
             }
             if c.clock == 3 && !c.is_write() {
-                pins = pins.with_data(bus.read(c.addr, c.fc, c.uds, c.lds));
+                let d = if c.fc == 7 {
+                    let l = ((c.addr >> 1) & 7) as u8;
+                    u16::from(bus.int_ack(l).unwrap_or(24 + l))
+                } else {
+                    bus.read(c.addr, c.fc, c.uds, c.lds)
+                };
+                pins = pins.with_data(d);
             }
         }
         let out = self.tick(pins.with_dtack(dtack));
