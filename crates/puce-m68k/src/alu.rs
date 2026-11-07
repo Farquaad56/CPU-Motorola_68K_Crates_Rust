@@ -1211,6 +1211,289 @@ pub const fn unary_rules(base: u16, id: InsnId) -> [Rule; N_RULES_UNARY] {
     out
 }
 
+// ---------------------------------------------------------------------------------------------
+// Comparisons: CMP, CMPI, CMPM, CMPA. Timing: docs/specs/instr/CMP.md and CMPA.md.
+// ---------------------------------------------------------------------------------------------
+
+/// Hook of the `CMPM` plans.
+pub const HK_CMPM: u8 = 0x8B;
+/// Hook of the `CMPA` plans.
+pub const HK_CMPA: u8 = 0x8C;
+
+/// Semantics of [`HK_CMPM`]: `(Ax)+ - (Ay)+` flags (source in `aux`, destination in `val`).
+pub fn cmpm_exec(cpu: &mut Cpu) {
+    let size = size_of_ird(cpu.lat.ird);
+    let (_, sr) = exec(Alu::Cmp, size, cpu.lat.aux, cpu.lat.val, cpu.regs.sr);
+    cpu.regs.sr = sr;
+}
+
+/// Semantics of [`HK_CMPA`]: `An - source` (word sign-extended) flags on 32 bits.
+pub fn cmpa_exec(cpu: &mut Cpu) {
+    let ird = cpu.lat.ird;
+    let reg = (ird & 7) as u8;
+    let src = match (ird >> 3) & 7 {
+        0 => cpu.regs.d[reg as usize],
+        1 => cpu.regs.an(reg),
+        _ => cpu.lat.val,
+    };
+    let src = if ird & 0x100 == 0 {
+        src as u16 as i16 as i32 as u32
+    } else {
+        src
+    };
+    let dst = cpu.regs.an(((ird >> 9) & 7) as u8);
+    let (_, sr) = exec(Alu::Cmp, Size::Long, src, dst, cpu.regs.sr);
+    cpu.regs.sr = sr;
+}
+
+const fn build_cmp(s: usize, f: usize) -> Entry {
+    let size = size_of_index(s);
+    let mut e = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    if f >= 2 {
+        e = push_all(e, ea_read_plan(src_ea(f), size));
+    }
+    e = push(e, Tok::H(HK_BINOP));
+    e = push(e, Tok::Pf);
+    if s == 2 {
+        e = push(e, Tok::N(2));
+    }
+    e
+}
+
+const fn build_cmpi(s: usize, f: usize) -> Entry {
+    let size = size_of_index(s);
+    let mut e = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    e = push_all(e, ea_read_plan(Ea::Imm, size));
+    e = push(e, Tok::H(HK_SAVE));
+    if f > 0 {
+        e = push_all(e, ea_read_plan(imm_ea(f), size));
+    }
+    e = push(e, Tok::H(HK_IMMOP));
+    e = push(e, Tok::Pf);
+    if f == 0 && s == 2 {
+        e = push(e, Tok::N(2));
+    }
+    e
+}
+
+const fn push_flagged(mut e: Entry, p: Plan) -> Entry {
+    let mut i = 0;
+    while i < p.len() {
+        e = push(
+            e,
+            match p[i] {
+                Tok::H(k) => Tok::H(k | DST_FLAG),
+                t => t,
+            },
+        );
+        i += 1;
+    }
+    e
+}
+
+const fn build_cmpm(s: usize) -> Entry {
+    let size = size_of_index(s);
+    let mut e = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    e = push_all(e, ea_read_plan(Ea::PostInc(0), size));
+    e = push(e, Tok::H(HK_SAVE));
+    e = push_flagged(e, ea_read_plan(Ea::PostInc(0), size));
+    e = push(e, Tok::H(HK_CMPM));
+    push(e, Tok::Pf)
+}
+
+const fn build_cmpa(s: usize, f: usize) -> Entry {
+    let size = if s == 0 { Size::Word } else { Size::Long };
+    let mut e = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    if f >= 2 {
+        e = push_all(e, ea_read_plan(src_ea(f), size));
+    }
+    e = push(e, Tok::H(HK_CMPA));
+    e = push(e, Tok::Pf);
+    push(e, Tok::N(2))
+}
+
+const fn build_cmp_plans() -> [Entry; 3 * SRC_FORMS] {
+    let empty = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    let mut out = [empty; 3 * SRC_FORMS];
+    let mut s = 0;
+    while s < 3 {
+        let mut f = 0;
+        while f < SRC_FORMS {
+            out[s * SRC_FORMS + f] = build_cmp(s, f);
+            f += 1;
+        }
+        s += 1;
+    }
+    out
+}
+
+const fn build_cmpi_plans() -> [Entry; N_IMM] {
+    let empty = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    let mut out = [empty; N_IMM];
+    let mut s = 0;
+    while s < 3 {
+        let mut f = 0;
+        while f < IMM_FORMS {
+            out[s * IMM_FORMS + f] = build_cmpi(s, f);
+            f += 1;
+        }
+        s += 1;
+    }
+    out
+}
+
+const fn build_cmpa_plans() -> [Entry; N_ADDA] {
+    let empty = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    let mut out = [empty; N_ADDA];
+    let mut s = 0;
+    while s < 2 {
+        let mut f = 0;
+        while f < SRC_FORMS {
+            out[s * SRC_FORMS + f] = build_cmpa(s, f);
+            f += 1;
+        }
+        s += 1;
+    }
+    out
+}
+
+static CMP_PLANS: [Entry; 3 * SRC_FORMS] = build_cmp_plans();
+static CMPI_PLANS: [Entry; N_IMM] = build_cmpi_plans();
+static CMPM_PLANS: [Entry; 3] = [build_cmpm(0), build_cmpm(1), build_cmpm(2)];
+static CMPA_PLANS: [Entry; N_ADDA] = build_cmpa_plans();
+
+/// Plan of `CMP`, `CMPI` or `CMPM` (opcode in the `ird` latch of `cpu`).
+pub fn cmp_plan(cpu: &Cpu) -> Plan {
+    let ird = cpu.lat.ird;
+    let e = if ird >> 12 == 0 {
+        &CMPI_PLANS[size_index(ird) * IMM_FORMS + imm_form(ird)]
+    } else if ird & 0x138 == 0x108 {
+        &CMPM_PLANS[size_index(ird)]
+    } else {
+        &CMP_PLANS[size_index(ird) * SRC_FORMS + src_form(ird)]
+    };
+    &e.toks[..e.n]
+}
+
+/// Plan of `CMPA`.
+pub fn cmpa_plan(cpu: &Cpu) -> Plan {
+    let ird = cpu.lat.ird;
+    let s = usize::from(ird & 0x100 != 0);
+    let e = &CMPA_PLANS[s * SRC_FORMS + src_form(ird)];
+    &e.toks[..e.n]
+}
+
+/// Hook dispatcher of `CMP`, `CMPI` and `CMPM`.
+pub fn cmp_hook(k: u8, cpu: &mut Cpu) {
+    match k {
+        HK_BINOP => binop_exec(Alu::Cmp, cpu),
+        HK_IMMOP => imm_exec(Alu::Cmp, cpu),
+        HK_CMPM => cmpm_exec(cpu),
+        HK_SAVE => cpu.lat.aux = cpu.lat.val,
+        _ => {
+            let ird = cpu.lat.ird;
+            let size = size_of_ird(ird);
+            if k & 0xC0 == DST_FLAG {
+                crate::ea::run_ea_hook(cpu, k & !DST_FLAG, ((ird >> 9) & 7) as u8, size);
+            } else {
+                crate::ea::run_ea_hook(cpu, k, (ird & 7) as u8, size);
+            }
+        }
+    }
+}
+
+/// Hook dispatcher of `CMPA`.
+pub fn cmpa_hook(k: u8, cpu: &mut Cpu) {
+    if k == HK_CMPA {
+        cmpa_exec(cpu);
+    } else {
+        let ird = cpu.lat.ird;
+        let size = if ird & 0x100 == 0 {
+            Size::Word
+        } else {
+            Size::Long
+        };
+        crate::ea::run_ea_hook(cpu, k, (ird & 7) as u8, size);
+    }
+}
+
+/// Number of rules of `CMP` with `CMPI` and `CMPM`.
+pub const N_RULES_CMP: usize = N_RULES_TO_DN + 24 + 3;
+
+/// Decoding rules of `CMP` (`0xB000`), `CMPI` (`0x0C00`) and `CMPM`.
+pub const fn cmp_rules(id: InsnId) -> [Rule; N_RULES_CMP] {
+    let mut out = [Rule {
+        mask: 0,
+        value: 0,
+        id: InsnId::ILLEGAL,
+        variant: 0,
+    }; N_RULES_CMP];
+    let plain: [Rule; N_RULES_TO_DN] = binop_rules(0xB000, id, false);
+    let mut k = 0;
+    while k < N_RULES_TO_DN {
+        out[k] = plain[k];
+        k += 1;
+    }
+    let mut s = 0;
+    while s < 3 {
+        let mut f = 0;
+        while f < IMM_FORMS {
+            let (m, v): (u16, u16) = match f {
+                0 => (0x38, 0),
+                1 => (0x38, 2 << 3),
+                2 => (0x38, 3 << 3),
+                3 => (0x38, 4 << 3),
+                4 => (0x38, 5 << 3),
+                5 => (0x38, 6 << 3),
+                6 => (0x3F, 0x38),
+                _ => (0x3F, 0x39),
+            };
+            out[k] = Rule {
+                mask: 0xFFC0 | m,
+                value: 0x0C00 | ((s as u16) << 6) | v,
+                id,
+                variant: 2,
+            };
+            k += 1;
+            f += 1;
+        }
+        s += 1;
+    }
+    let mut s = 0;
+    while s < 3 {
+        out[k] = Rule {
+            mask: 0xF1F8,
+            value: 0xB108 | ((s as u16) << 6),
+            id,
+            variant: 3,
+        };
+        k += 1;
+        s += 1;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
