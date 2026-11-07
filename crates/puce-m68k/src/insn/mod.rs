@@ -12,6 +12,7 @@ use crate::cpu::Cpu;
 use crate::decode::{InsnId, Rule};
 use crate::engine::plan::Plan;
 
+pub mod i_add;
 pub mod i_clr;
 pub mod i_exg;
 pub mod i_ext;
@@ -23,6 +24,7 @@ pub mod i_movem;
 pub mod i_movep;
 pub mod i_moveq;
 pub mod i_pea;
+pub mod i_sub;
 pub mod i_swap;
 pub mod i_unlink;
 // @mods
@@ -45,6 +47,8 @@ const GROUPS: &[&[Rule]] = &[
     i_link::RULES,
     i_unlink::RULES,
     i_clr::RULES,
+    i_add::RULES,
+    i_sub::RULES,
     // @groups
 ];
 
@@ -65,6 +69,8 @@ const GROUPS: &[&[Rule]] = &[
     i_link::RULES,
     i_unlink::RULES,
     i_clr::RULES,
+    i_add::RULES,
+    i_sub::RULES,
     // @tgroups
     testing::RULES,
 ];
@@ -127,6 +133,8 @@ pub(crate) fn plan_for(id: InsnId, variant: u8, cpu: &mut Cpu) -> Plan {
         i_link::ID => i_link::plan(variant),
         i_unlink::ID => i_unlink::plan(variant),
         i_clr::ID => i_clr::plan(variant, cpu),
+        i_add::ID => i_add::plan(variant, cpu),
+        i_sub::ID => i_sub::plan(variant, cpu),
         // @plans
         #[cfg(test)]
         testing::ID => testing::plan(variant),
@@ -152,6 +160,8 @@ pub(crate) fn run_hook(id: InsnId, k: u8, cpu: &mut Cpu) {
         i_link::ID => i_link::hook(k, cpu),
         i_unlink::ID => i_unlink::hook(k, cpu),
         i_clr::ID => i_clr::hook(k, cpu),
+        i_add::ID => i_add::hook(k, cpu),
+        i_sub::ID => i_sub::hook(k, cpu),
         // @hooks
         #[cfg(test)]
         testing::ID => testing::hook(k, cpu),
