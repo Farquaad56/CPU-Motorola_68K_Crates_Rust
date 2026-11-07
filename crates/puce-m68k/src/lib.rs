@@ -15,7 +15,7 @@ pub mod bus;
 pub mod pins;
 pub mod regs;
 // pub mod cpu;
-// pub mod engine;
+pub mod engine;
 // pub mod decode;
 // pub mod ea;
 // pub mod alu;
