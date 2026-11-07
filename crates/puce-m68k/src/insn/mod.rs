@@ -12,6 +12,7 @@ use crate::cpu::Cpu;
 use crate::decode::{InsnId, Rule};
 use crate::engine::plan::Plan;
 
+pub mod i_abcd;
 pub mod i_add;
 pub mod i_adda;
 pub mod i_addx;
@@ -41,6 +42,7 @@ pub mod i_movep;
 pub mod i_moveq;
 pub mod i_muls;
 pub mod i_mulu;
+pub mod i_nbcd;
 pub mod i_neg;
 pub mod i_negx;
 pub mod i_not;
@@ -50,6 +52,7 @@ pub mod i_rol;
 pub mod i_ror;
 pub mod i_roxl;
 pub mod i_roxr;
+pub mod i_sbcd;
 pub mod i_sub;
 pub mod i_suba;
 pub mod i_subx;
@@ -107,6 +110,9 @@ const GROUPS: &[&[Rule]] = &[
     i_bset::RULES,
     i_bclr::RULES,
     i_bchg::RULES,
+    i_abcd::RULES,
+    i_sbcd::RULES,
+    i_nbcd::RULES,
     // @groups
 ];
 
@@ -158,6 +164,9 @@ const GROUPS: &[&[Rule]] = &[
     i_bset::RULES,
     i_bclr::RULES,
     i_bchg::RULES,
+    i_abcd::RULES,
+    i_sbcd::RULES,
+    i_nbcd::RULES,
     // @tgroups
     testing::RULES,
 ];
@@ -251,6 +260,9 @@ pub(crate) fn plan_for(id: InsnId, variant: u8, cpu: &mut Cpu) -> Plan {
         i_bset::ID => i_bset::plan(variant, cpu),
         i_bclr::ID => i_bclr::plan(variant, cpu),
         i_bchg::ID => i_bchg::plan(variant, cpu),
+        i_abcd::ID => i_abcd::plan(variant, cpu),
+        i_sbcd::ID => i_sbcd::plan(variant, cpu),
+        i_nbcd::ID => i_nbcd::plan(variant, cpu),
         // @plans
         #[cfg(test)]
         testing::ID => testing::plan(variant),
@@ -307,6 +319,9 @@ pub(crate) fn run_hook(id: InsnId, k: u8, cpu: &mut Cpu) {
         i_bset::ID => i_bset::hook(k, cpu),
         i_bclr::ID => i_bclr::hook(k, cpu),
         i_bchg::ID => i_bchg::hook(k, cpu),
+        i_abcd::ID => i_abcd::hook(k, cpu),
+        i_sbcd::ID => i_sbcd::hook(k, cpu),
+        i_nbcd::ID => i_nbcd::hook(k, cpu),
         // @hooks
         #[cfg(test)]
         testing::ID => testing::hook(k, cpu),

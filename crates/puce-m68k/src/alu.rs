@@ -2356,6 +2356,157 @@ pub const fn bit_rules<const N: usize>(tt: u16, id: InsnId) -> [Rule; N] {
     out
 }
 
+// ---------------------------------------------------------------------------------------------
+// Decimal arithmetic: ABCD, SBCD, NBCD. Timing: docs/specs/instr/ABCD.md and NBCD.md.
+// ---------------------------------------------------------------------------------------------
+
+/// Decimal binary operation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Bcd {
+    /// `dst + src + X`.
+    Abcd,
+    /// `dst - src - X`.
+    Sbcd,
+}
+
+/// Sets the flags of a BCD result: X and C = `carry`, V as computed, N from bit 7, Z only cleared.
+fn bcd_flags(sr: u16, res: u32, v: u32, carry: bool) -> u16 {
+    let mut sr = sr & !(X | N | V | C);
+    if carry {
+        sr |= X | C;
+    }
+    if v & 0x80 != 0 {
+        sr |= V;
+    }
+    if res & 0x80 != 0 {
+        sr |= N;
+    }
+    if res & 0xFF != 0 {
+        sr &= !Z;
+    }
+    sr
+}
+
+/// `ABCD` on bytes: result and new status register (behaviour measured on the SST files).
+pub fn abcd_calc(src: u32, dst: u32, sr: u16) -> (u32, u16) {
+    let x = u32::from(sr & X != 0);
+    let (src, dst) = (src & 0xFF, dst & 0xFF);
+    let bin = src + dst + x;
+    let low = (src & 0xF) + (dst & 0xF) + x;
+    let t = if low > 9 { bin + 6 } else { bin };
+    let carry = t >= 0xA0;
+    let res = (if carry { t + 0x60 } else { t }) & 0xFF;
+    (res, bcd_flags(sr, res, !bin & res, carry))
+}
+
+/// `SBCD` on bytes: `dst - src - X`.
+pub fn sbcd_calc(src: u32, dst: u32, sr: u16) -> (u32, u16) {
+    let x = i32::from(sr & X != 0);
+    let (src, dst) = ((src & 0xFF) as i32, (dst & 0xFF) as i32);
+    let bin = dst - src - x;
+    let low = (dst & 0xF) - (src & 0xF) - x;
+    let t = if low < 0 { bin - 6 } else { bin };
+    let res = (if bin < 0 { t - 0x60 } else { t } as u32) & 0xFF;
+    (res, bcd_flags(sr, res, (bin as u32) & !res, t < 0))
+}
+
+/// `NBCD`: `0 - dst - X` in decimal.
+pub fn nbcd_calc(dst: u32, sr: u16) -> (u32, u16) {
+    sbcd_calc(dst, 0, sr)
+}
+
+/// Semantics of [`HK_XOP`] for `ABCD` / `SBCD`.
+pub fn bcd_exec(op: Bcd, cpu: &mut Cpu) {
+    let ird = cpu.lat.ird;
+    let dn = ((ird >> 9) & 7) as usize;
+    let mem = ird & 8 != 0;
+    let src = if mem {
+        cpu.lat.aux
+    } else {
+        cpu.regs.d[(ird & 7) as usize]
+    };
+    let dst = if mem { cpu.lat.val } else { cpu.regs.d[dn] };
+    let (r, sr) = match op {
+        Bcd::Abcd => abcd_calc(src, dst, cpu.regs.sr),
+        Bcd::Sbcd => sbcd_calc(src, dst, cpu.regs.sr),
+    };
+    cpu.regs.sr = sr;
+    if mem {
+        cpu.lat.val = r;
+    } else {
+        set_dn(cpu, dn, Size::Byte, r);
+    }
+}
+
+static BCD_REG: [Tok; 3] = [Tok::H(HK_XOP), Tok::Pf, Tok::N(2)];
+static NBCD_REG: [Tok; 3] = [Tok::H(HK_UNARY), Tok::Pf, Tok::N(2)];
+
+/// Plan of `ABCD` / `SBCD`.
+pub fn bcd_plan(cpu: &Cpu) -> Plan {
+    if cpu.lat.ird & 8 == 0 {
+        &BCD_REG
+    } else {
+        x_plan(cpu)
+    }
+}
+
+/// Hook dispatcher of `ABCD` / `SBCD`.
+pub fn bcd_hook(op: Bcd, k: u8, cpu: &mut Cpu) {
+    if k == HK_XOP {
+        bcd_exec(op, cpu);
+    } else {
+        x_hook(Alu::Add, k, cpu);
+    }
+}
+
+/// Plan of `NBCD`.
+pub fn nbcd_plan(cpu: &Cpu) -> Plan {
+    if (cpu.lat.ird >> 3) & 7 == 0 {
+        &NBCD_REG
+    } else {
+        unary_plan(cpu, false)
+    }
+}
+
+/// Hook dispatcher of `NBCD`.
+pub fn nbcd_hook(k: u8, cpu: &mut Cpu) {
+    if k == HK_UNARY {
+        let ird = cpu.lat.ird;
+        let reg = (ird & 7) as usize;
+        if (ird >> 3) & 7 == 0 {
+            let (r, sr) = nbcd_calc(cpu.regs.d[reg], cpu.regs.sr);
+            set_dn(cpu, reg, Size::Byte, r);
+            cpu.regs.sr = sr;
+        } else {
+            let (r, sr) = nbcd_calc(cpu.lat.val, cpu.regs.sr);
+            cpu.lat.val = r;
+            cpu.regs.sr = sr;
+        }
+    } else {
+        unary_hook(Unary::Not, k, cpu);
+    }
+}
+
+/// Number of rules of `NBCD`.
+pub const N_RULES_NBCD: usize = IMM_FORMS;
+
+/// Decoding rules of `NBCD` (`0100 1000 00 ea`, data-alterable modes).
+pub const fn nbcd_rules(id: InsnId) -> [Rule; N_RULES_NBCD] {
+    let mut out = [Rule {
+        mask: 0,
+        value: 0,
+        id: InsnId::ILLEGAL,
+        variant: 0,
+    }; N_RULES_NBCD];
+    let mut f = 0;
+    while f < IMM_FORMS {
+        let r = imm_form_rule(0x4800, 0, f, id);
+        out[f] = Rule { variant: 0, ..r };
+        f += 1;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
