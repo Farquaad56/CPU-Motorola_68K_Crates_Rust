@@ -1,0 +1,149 @@
+id	title	epic	deps	gate	kind	size	role
+E01-01	Squelette du crate puce-m68k	E01		0	code	40	hermes
+E01-02	Squelette du crate puce-m68k-machines	E01	E01-01	0	code	30	hermes
+E01-03	Squelette du binaire puce-m68k-cli (m68k)	E01	E01-02	0	code	70	hermes
+E01-04	Squelette du binaire puce-m68k-web (m68k-web)	E01	E01-03	0	code	60	hermes
+E01-05	Squelette du crate puce-m68k-wasm	E01	E01-04	0	code	20	hermes
+E01-06	Scripts de CI et d'hygiene	E01	E01-05	0	tooling	60	hermes
+E01-07	GATE E01 - workspace valide	E01	E01-06	1	gate	0	user
+E02-01	Type Pins (broches du 68000)	E02	E01-07	0	code	110	hermes
+E02-02	Registres (Regs)	E02	E02-01	0	code	120	hermes
+E02-03	Trait Bus de confort	E02	E02-02	0	code	60	hermes
+E02-04	Jetons de plan (Tok, Plan)	E02	E02-03	0	code	110	hermes
+E02-05	Profil des broches par horloge (cycle de bus)	E02	E02-04	0	code	120	hermes
+E02-06	Moteur: execution d'un plan avec attente DTACK	E02	E02-05	0	code	150	hermes
+E02-07	GATE E02 - broches, registres, bus et moteur de base	E02	E02-06	1	gate	0	user
+E03-01	Lecteur du format SingleStepTests (.json.bin)	E03	E02-07	0	code	150	hermes
+E03-02	Machine RAM plate (FlatRam)	E03	E03-01	0	code	100	hermes
+E03-03	Etat du CPU: load_state, state, tick_bus	E03	E03-02	0	code	130	hermes
+E03-04	Journal de bus (feature inspect)	E03	E03-03	0	code	100	hermes
+E03-05	Runner: execution et comparaison d'un test	E03	E03-04	0	code	150	hermes
+E03-06	Runner: fichiers, repertoire, exceptions connues	E03	E03-05	0	code	140	hermes
+E03-07	Commande m68k ssc	E03	E03-06	0	code	110	hermes
+E03-08	GATE E03 - runner valide (tous les tests echouent: attendu)	E03	E03-07	1	gate	0	user
+E04-01	GATE - telecharger Yacht.txt et les manuels	E04	E03-08	1	gate	0	user
+E04-02	Decouper Yacht.txt en un fichier par instruction	E04	E04-01	0	tooling	150	hermes
+E04-03	Tableau des modes d'adressage (timing)	E04	E04-02	0	doc	0	hermes
+E04-04	GATE E04 - specs par instruction	E04	E04-03	1	gate	0	user
+E05-01	Table de decodage (65536 entrees, const fn)	E05	E04-04	0	code	130	hermes
+E05-02	Champs d'adressage effectif et categories de validite	E05	E05-01	0	code	140	hermes
+E05-03	File de prefetch (IR/IRC) et jeton Pf	E05	E05-02	0	code	120	hermes
+E05-04a	Plans d'adresse effective: Dn, An, (An), (An)+, -(An)	E05	E05-03	0	code	140	hermes
+E05-04b	Plans d'adresse effective: d16(An), d8(An,Xn), abs, PC-relatif, immediat	E05	E05-04a	0	code	150	hermes
+E05-05	Boucle d'instruction: decodage et execution (step)	E05	E05-04b	0	code	140	hermes
+E05-06	GATE E05 - decodage, EA, prefetch, step	E05	E05-05	1	gate	0	user
+E06-01	NOP	E06	E05-06	0	code	110	hermes
+E06-02a	MOVE (1/2): sources registre et immediat	E06	E06-01	0	code	120	hermes
+E06-02b	MOVE (2/2): tous les autres modes	E06	E06-02a	0	code	120	hermes
+E06-03	MOVEA	E06	E06-02b	0	code	110	hermes
+E06-04	MOVEQ	E06	E06-03	0	code	110	hermes
+E06-05a	MOVEM (1/2): registres vers memoire	E06	E06-04	0	code	120	hermes
+E06-05b	MOVEM (2/2): memoire vers registres	E06	E06-05a	0	code	120	hermes
+E06-06	MOVEP	E06	E06-05b	0	code	110	hermes
+E06-07	LEA	E06	E06-06	0	code	110	hermes
+E06-08	PEA	E06	E06-07	0	code	110	hermes
+E06-09	EXG	E06	E06-08	0	code	110	hermes
+E06-10	SWAP	E06	E06-09	0	code	110	hermes
+E06-11	EXT	E06	E06-10	0	code	110	hermes
+E06-12	LINK	E06	E06-11	0	code	110	hermes
+E06-13	UNLINK	E06	E06-12	0	code	110	hermes
+E06-14	CLR	E06	E06-13	0	code	110	hermes
+E06-99	GATE E06 - transferts de donnees	E06	E06-14	1	gate	0	user
+E07-01	ADD	E07	E06-99	0	code	110	hermes
+E07-02	ADDA	E07	E07-01	0	code	110	hermes
+E07-03	ADDX	E07	E07-02	0	code	110	hermes
+E07-04	SUB	E07	E07-03	0	code	110	hermes
+E07-05	SUBA	E07	E07-04	0	code	110	hermes
+E07-06	SUBX	E07	E07-05	0	code	110	hermes
+E07-07	NEG	E07	E07-06	0	code	110	hermes
+E07-08	NEGX	E07	E07-07	0	code	110	hermes
+E07-09	CMP	E07	E07-08	0	code	110	hermes
+E07-10	CMPA	E07	E07-09	0	code	110	hermes
+E07-11	TST	E07	E07-10	0	code	110	hermes
+E07-12	MULU	E07	E07-11	0	code	110	hermes
+E07-13	MULS	E07	E07-12	0	code	110	hermes
+E07-14a	DIVU (1/2): quotient et reste	E07	E07-13	0	code	120	hermes
+E07-14b	DIVU (2/2): timing de l'algorithme	E07	E07-14a	0	code	120	hermes
+E07-15a	DIVS (1/2): quotient et reste signes	E07	E07-14b	0	code	120	hermes
+E07-15b	DIVS (2/2): timing de l'algorithme	E07	E07-15a	0	code	120	hermes
+E07-99	GATE E07 - arithmetique entiere	E07	E07-15b	1	gate	0	user
+E08-01	AND	E08	E07-99	0	code	110	hermes
+E08-02	OR	E08	E08-01	0	code	110	hermes
+E08-03	EOR	E08	E08-02	0	code	110	hermes
+E08-04	NOT	E08	E08-03	0	code	110	hermes
+E08-05	ASL	E08	E08-04	0	code	110	hermes
+E08-06	ASR	E08	E08-05	0	code	110	hermes
+E08-07	LSL	E08	E08-06	0	code	110	hermes
+E08-08	LSR	E08	E08-07	0	code	110	hermes
+E08-09	ROL	E08	E08-08	0	code	110	hermes
+E08-10	ROR	E08	E08-09	0	code	110	hermes
+E08-11	ROXL	E08	E08-10	0	code	110	hermes
+E08-12	ROXR	E08	E08-11	0	code	110	hermes
+E08-13	BTST	E08	E08-12	0	code	110	hermes
+E08-14	BSET	E08	E08-13	0	code	110	hermes
+E08-15	BCLR	E08	E08-14	0	code	110	hermes
+E08-16	BCHG	E08	E08-15	0	code	110	hermes
+E08-17	ABCD	E08	E08-16	0	code	110	hermes
+E08-18	SBCD	E08	E08-17	0	code	110	hermes
+E08-19	NBCD	E08	E08-18	0	code	110	hermes
+E08-99	GATE E08 - logique, decalages, bits et BCD	E08	E08-19	1	gate	0	user
+E09-01	Bcc	E09	E08-99	0	code	110	hermes
+E09-02	BSR	E09	E09-01	0	code	110	hermes
+E09-03	DBcc	E09	E09-02	0	code	110	hermes
+E09-04	Scc	E09	E09-03	0	code	110	hermes
+E09-05	JMP	E09	E09-04	0	code	110	hermes
+E09-06	JSR	E09	E09-05	0	code	110	hermes
+E09-07	RTS	E09	E09-06	0	code	110	hermes
+E09-08	RTR	E09	E09-07	0	code	110	hermes
+E09-99	GATE E09 - controle de flux	E09	E09-08	1	gate	0	user
+E10-01	ANDItoCCR	E10	E09-99	0	code	110	hermes
+E10-02	ANDItoSR	E10	E10-01	0	code	110	hermes
+E10-03	ORItoCCR	E10	E10-02	0	code	110	hermes
+E10-04	ORItoSR	E10	E10-03	0	code	110	hermes
+E10-05	EORItoCCR	E10	E10-04	0	code	110	hermes
+E10-06	EORItoSR	E10	E10-05	0	code	110	hermes
+E10-07	MOVEtoCCR	E10	E10-06	0	code	110	hermes
+E10-08	MOVEtoSR	E10	E10-07	0	code	110	hermes
+E10-09	MOVEfromSR	E10	E10-08	0	code	110	hermes
+E10-10	MOVEtoUSP	E10	E10-09	0	code	110	hermes
+E10-11	MOVEfromUSP	E10	E10-10	0	code	110	hermes
+E10-12	TAS	E10	E10-11	0	code	110	hermes
+E10-99	GATE E10 - registres d'etat et divers	E10	E10-12	1	gate	0	user
+E11-01	GATE E11 - demarrage des exceptions et interruptions	E11	E10-99	1	gate	0	user
+E11-02	Traitement d'exception (groupes 1 et 2) et vecteurs	E11	E11-01	0	code	150	hermes
+E11-03	Address error (frame de groupe 0)	E11	E11-02	0	code	150	none
+E11-04	Violation de privilege, opcode illegal, lignes A et F	E11	E11-03	0	code	110	none
+E11-05	Interruptions IPL0-2 et autovecteur	E11	E11-04	0	code	140	hermes
+E11-06	RESET, HALT et double faute de bus	E11	E11-05	0	code	110	hermes
+E11-07	TRAP	E11	E11-06	0	code	110	none
+E11-08	TRAPV	E11	E11-07	0	code	110	none
+E11-09	CHK	E11	E11-08	0	code	110	none
+E11-10	ILLEGAL_LINEA	E11	E11-09	0	code	110	none
+E11-11	ILLEGAL_LINEF	E11	E11-10	0	code	110	none
+E11-12	RTE	E11	E11-11	0	code	110	none
+E11-13	STOP	E11	E11-12	0	code	110	none
+E11-14	RESET	E11	E11-13	0	code	110	none
+E12-01	Desassembleur: infrastructure et formatage des operandes	E12	E11-14	0	code	140	hermes
+E12-02	Desassembleur: transferts et arithmetique	E12	E12-01	0	code	140	hermes
+E12-03	Desassembleur: logique, decalages, bits, BCD	E12	E12-02	0	code	140	hermes
+E12-04	Desassembleur: controle de flux et systeme	E12	E12-03	0	code	140	hermes
+E12-05	Desassembleur: couverture des 65536 opcodes	E12	E12-04	0	code	90	hermes
+E12-06	CLI: commandes run et disasm	E12	E12-05	0	code	130	hermes
+E12-07	CLI: commande fetch	E12	E12-06	0	code	40	hermes
+E12-08	GATE E12 - desassembleur et CLI	E12	E12-07	1	gate	0	user
+E13-01	Session: commandes et boucle de simulation	E13	E12-08	0	code	150	hermes
+E13-02	Session: instantane d'etat conforme au protocole	E13	E13-01	0	code	150	hermes
+E13-03	Serveur HTTP: page et sante	E13	E13-02	0	code	100	hermes
+E13-04	Serveur WebSocket (/ws)	E13	E13-03	0	code	150	hermes
+E13-05	Commandes: roms, load, upload, sst	E13	E13-04	0	code	140	hermes
+E13-06	Page web Tailwind: panneaux et protocole	E13	E13-05	0	ui	150	hermes
+E13-07	Test bout en bout du serveur (client Rust)	E13	E13-06	0	code	140	hermes
+E13-08	Binaire m68k-web: demarrage et arret propre	E13	E13-07	0	code	70	hermes
+E13-09	GATE E13 - serveur et page valides	E13	E13-08	1	gate	0	user
+E14-01	Liaison wasm-bindgen du coeur	E14	E13-09	0	code	120	hermes
+E14-02	Demo WebAssembly (page statique Tailwind)	E14	E14-01	0	ui	120	hermes
+E14-03	GATE E14 - demo WASM	E14	E14-02	1	gate	0	user
+E15-01	Performance du coeur (release)	E15	E14-03	0	code	100	hermes
+E15-02	Baseline complete SingleStepTests	E15	E15-01	0	code	100	hermes
+E15-03	Documentation du crate et README final	E15	E15-02	0	doc	0	hermes
+E15-04	GATE FINAL - crate 68000 complet	E15	E15-03	1	gate	0	user

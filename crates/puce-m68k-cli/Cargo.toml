@@ -1,0 +1,18 @@
+[package]
+name = "puce-m68k-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+description = "Command-line tool for puce-m68k"
+
+[[bin]]
+name = "m68k"
+path = "src/main.rs"
+
+[dependencies]
+puce-m68k = { path = "../puce-m68k", features = ["inspect", "disasm", "std"] }
+puce-m68k-machines = { path = "../puce-m68k-machines" }
+clap = { version = "4", features = ["derive"] }

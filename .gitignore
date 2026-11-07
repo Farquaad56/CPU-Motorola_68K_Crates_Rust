@@ -1,0 +1,17 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+tests/roms/*
+!tests/roms/README.md
+tests/singlestep/*.bin
+tests/singlestep/*.json
+docs/ref/*.pdf
+docs/ref/Yacht.txt
+docs/qa/inbox/*
+!docs/qa/inbox/.gitkeep
+.hermes/
+*.log
+m68k_pack.tgz
+
+__pycache__/
+*.pyc

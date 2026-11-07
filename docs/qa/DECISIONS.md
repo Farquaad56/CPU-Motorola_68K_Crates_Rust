@@ -1,0 +1,19 @@
+# DECISIONS (source de verite; jamais contredite par une tache)
+
+| ID | Date | Decision | Origine |
+|---|---|---|---|
+| D-001 | 2026-11-07 | Projet = crate Rust `puce-m68k`, Motorola 68000 seul, cycle perfect, reutilisable; methode Hermes Kanban identique au crate Z80 | utilisateur |
+| D-002 | 2026-11-07 | Precision micro-cycle (style FX68K/MAME). PRECISION Claude: `Cpu::tick` = 1 horloge (et non 2) car les wait states DTACK durent 1 horloge; le micro-cycle de 2 horloges reste l'unite d'ordonnancement interne | utilisateur + Claude, a confirmer |
+| D-003 | 2026-11-07 | Broches modelisees: DTACK, UDS/LDS, FC0-FC2, AS, RW. Exceptions, interruptions (IPL/VPA/VMA), BERR/HALT/RESET, BR/BG/BGACK = E11, differee | utilisateur |
+| D-005 | 2026-11-07 | Frontend identique au crate Z80: serveur local Rust (HTTP+WebSocket) + page Tailwind FR/EN, aucun calcul CPU en JS; demo WASM | utilisateur |
+| D-006 | 2026-11-07 | Machine d'essai: RAM plate + runner SingleStepTests uniquement | utilisateur |
+| D-007 | 2026-11-07 | Oracle: SingleStepTests/m68000 (genere par MAME, pas du materiel) + Yacht.txt; exceptions connues TAS et TRAPV | utilisateur |
+| D-008 | 2026-11-07 | Noms: crates `puce-m68k*`, board/tenant Hermes `m68k`, profil `M68K_Crate`, binaires `m68k` et `m68k-web` | utilisateur |
+| D-009 | 2026-11-07 | `puce-m68k`: entiers uniquement, deterministe, `#![forbid(unsafe_code)]`, `#![no_std]`, sans dependance | defaut (herite du Z80) |
+| D-010 | 2026-11-07 | Une carte Kanban = une instruction; contexte LLM local 135000 tokens | utilisateur |
+| D-011 | 2026-11-07 | Broches en logique positive (RW = signal materiel: 1 lecture) | defaut Claude |
+| D-014 | 2026-11-07 | Taches de 50 a 150 lignes de code | methode Puce16 |
+| D-020 | 2026-11-07 | Execution strictement sequentielle, une tache a la fois | methode Puce16 |
+| D-032 | 2026-11-07 | Contraintes NeoGeo (futur projet puce-neogeo = puce-z80 + puce-m68k, voir specs/40_NEOGEO_CONSTRAINTS.md): E11-02 (traitement d'exception), E11-05 (IPL + autovecteur, niveaux 1-3) et E11-06 (RESET) ne sont plus differees; `Cpu::tick(pins)` reste disponible en plus du trait `Bus` (DTACK pilote par l'hote); aucun diviseur d'horloge dans les coeurs. SUPERSEDE partiellement D-003 | utilisateur |
+| D-030 | 2026-11-07 | Les tests SingleStepTests contenant un cycle `re`/`we` (address error) sont ignores et comptes a part jusqu'a E11; `ssc --strict` ne tient pas compte des stems de `sst_known_exceptions.txt` | defaut Claude, a confirmer |
+| D-031 | 2026-11-07 | Le script `decode.py` du depot SingleStepTests n'est jamais execute (code externe): le format binaire est decrit dans specs/33 et lu par du code Rust ecrit dans le projet | Claude |

@@ -1,0 +1,128 @@
+stem	mnemonic	size	file	tests	epic	notes
+ABCD	ABCD	-	ABCD.json.bin	2500	E08	
+ADD.b	ADD	b	ADD.b.json.bin	2500	E07	ADDI/ADDQ sans fichier propre: probablement inclus ici (a confirmer E03-03)
+ADD.l	ADD	l	ADD.l.json.bin	2500	E07	ADDI/ADDQ sans fichier propre: probablement inclus ici (a confirmer E03-03)
+ADD.w	ADD	w	ADD.w.json.bin	2500	E07	ADDI/ADDQ sans fichier propre: probablement inclus ici (a confirmer E03-03)
+ADDA.l	ADDA	l	ADDA.l.json.bin	2500	E07	
+ADDA.w	ADDA	w	ADDA.w.json.bin	2500	E07	
+ADDX.b	ADDX	b	ADDX.b.json.bin	2500	E07	
+ADDX.l	ADDX	l	ADDX.l.json.bin	2500	E07	
+ADDX.w	ADDX	w	ADDX.w.json.bin	2500	E07	
+AND.b	AND	b	AND.b.json.bin	2500	E08	ANDI idem (a confirmer)
+AND.l	AND	l	AND.l.json.bin	2500	E08	ANDI idem (a confirmer)
+AND.w	AND	w	AND.w.json.bin	2500	E08	ANDI idem (a confirmer)
+ANDItoCCR	ANDItoCCR	-	ANDItoCCR.json.bin	2500	E10	
+ANDItoSR	ANDItoSR	-	ANDItoSR.json.bin	2500	E10	
+ASL.b	ASL	b	ASL.b.json.bin	2500	E08	
+ASL.l	ASL	l	ASL.l.json.bin	2500	E08	
+ASL.w	ASL	w	ASL.w.json.bin	2500	E08	
+ASR.b	ASR	b	ASR.b.json.bin	2500	E08	
+ASR.l	ASR	l	ASR.l.json.bin	2500	E08	
+ASR.w	ASR	w	ASR.w.json.bin	2500	E08	
+BCHG	BCHG	-	BCHG.json.bin	2500	E08	
+BCLR	BCLR	-	BCLR.json.bin	2500	E08	
+BSET	BSET	-	BSET.json.bin	2500	E08	
+BSR	BSR	-	BSR.json.bin	2500	E09	
+BTST	BTST	-	BTST.json.bin	2500	E08	
+Bcc	Bcc	-	Bcc.json.bin	2500	E09	
+CHK	CHK	-	CHK.json.bin	2500	E11	exception si hors bornes (E10)
+CLR.b	CLR	b	CLR.b.json.bin	2500	E06	
+CLR.l	CLR	l	CLR.l.json.bin	2500	E06	
+CLR.w	CLR	w	CLR.w.json.bin	2500	E06	
+CMP.b	CMP	b	CMP.b.json.bin	2500	E07	CMPI idem (a confirmer)
+CMP.l	CMP	l	CMP.l.json.bin	2500	E07	CMPI idem (a confirmer)
+CMP.w	CMP	w	CMP.w.json.bin	2500	E07	CMPI idem (a confirmer)
+CMPA.l	CMPA	l	CMPA.l.json.bin	2500	E07	
+CMPA.w	CMPA	w	CMPA.w.json.bin	2500	E07	
+DBcc	DBcc	-	DBcc.json.bin	2500	E09	
+DIVS	DIVS	-	DIVS.json.bin	2500	E07	division par zero = exception (E10)
+DIVU	DIVU	-	DIVU.json.bin	2500	E07	division par zero = exception (E10)
+EOR.b	EOR	b	EOR.b.json.bin	2500	E08	EORI idem (a confirmer)
+EOR.l	EOR	l	EOR.l.json.bin	2500	E08	EORI idem (a confirmer)
+EOR.w	EOR	w	EOR.w.json.bin	2500	E08	EORI idem (a confirmer)
+EORItoCCR	EORItoCCR	-	EORItoCCR.json.bin	2500	E10	
+EORItoSR	EORItoSR	-	EORItoSR.json.bin	2500	E10	
+EXG	EXG	-	EXG.json.bin	2500	E06	
+EXT.l	EXT	l	EXT.l.json.bin	2500	E06	
+EXT.w	EXT	w	EXT.w.json.bin	2500	E06	
+ILLEGAL_LINEA	ILLEGAL_LINEA	-	ILLEGAL_LINEA.json.bin	2500	E11	
+ILLEGAL_LINEF	ILLEGAL_LINEF	-	ILLEGAL_LINEF.json.bin	2500	E11	
+JMP	JMP	-	JMP.json.bin	2500	E09	
+JSR	JSR	-	JSR.json.bin	2500	E09	
+LEA	LEA	-	LEA.json.bin	2500	E06	
+LINK	LINK	-	LINK.json.bin	2500	E06	
+LSL.b	LSL	b	LSL.b.json.bin	2500	E08	
+LSL.l	LSL	l	LSL.l.json.bin	2500	E08	
+LSL.w	LSL	w	LSL.w.json.bin	2500	E08	
+LSR.b	LSR	b	LSR.b.json.bin	2500	E08	
+LSR.l	LSR	l	LSR.l.json.bin	2500	E08	
+LSR.w	LSR	w	LSR.w.json.bin	2500	E08	
+MOVE.b	MOVE	b	MOVE.b.json.bin	2500	E06	
+MOVE.l	MOVE	l	MOVE.l.json.bin	2500	E06	
+MOVE.q	MOVEQ	q	MOVE.q.json.bin	2500	E06	MOVEQ
+MOVE.w	MOVE	w	MOVE.w.json.bin	2500	E06	
+MOVEA.l	MOVEA	l	MOVEA.l.json.bin	2500	E06	
+MOVEA.w	MOVEA	w	MOVEA.w.json.bin	2500	E06	
+MOVEM.l	MOVEM	l	MOVEM.l.json.bin	2500	E06	
+MOVEM.w	MOVEM	w	MOVEM.w.json.bin	2500	E06	
+MOVEP.l	MOVEP	l	MOVEP.l.json.bin	2500	E06	
+MOVEP.w	MOVEP	w	MOVEP.w.json.bin	2500	E06	
+MOVEfromSR	MOVEfromSR	-	MOVEfromSR.json.bin	2500	E10	
+MOVEfromUSP	MOVEfromUSP	-	MOVEfromUSP.json.bin	2500	E10	
+MOVEtoCCR	MOVEtoCCR	-	MOVEtoCCR.json.bin	2500	E10	
+MOVEtoSR	MOVEtoSR	-	MOVEtoSR.json.bin	2500	E10	
+MOVEtoUSP	MOVEtoUSP	-	MOVEtoUSP.json.bin	2500	E10	
+MULS	MULS	-	MULS.json.bin	2500	E07	
+MULU	MULU	-	MULU.json.bin	2500	E07	
+NBCD	NBCD	-	NBCD.json.bin	2500	E08	
+NEG.b	NEG	b	NEG.b.json.bin	2500	E07	
+NEG.l	NEG	l	NEG.l.json.bin	2500	E07	
+NEG.w	NEG	w	NEG.w.json.bin	2500	E07	
+NEGX.b	NEGX	b	NEGX.b.json.bin	2500	E07	
+NEGX.l	NEGX	l	NEGX.l.json.bin	2500	E07	
+NEGX.w	NEGX	w	NEGX.w.json.bin	2500	E07	
+NOP	NOP	-	NOP.json.bin	2500	E06	
+NOT.b	NOT	b	NOT.b.json.bin	2500	E08	
+NOT.l	NOT	l	NOT.l.json.bin	2500	E08	
+NOT.w	NOT	w	NOT.w.json.bin	2500	E08	
+OR.b	OR	b	OR.b.json.bin	2500	E08	ORI idem (a confirmer)
+OR.l	OR	l	OR.l.json.bin	2500	E08	ORI idem (a confirmer)
+OR.w	OR	w	OR.w.json.bin	2500	E08	ORI idem (a confirmer)
+ORItoCCR	ORItoCCR	-	ORItoCCR.json.bin	2500	E10	
+ORItoSR	ORItoSR	-	ORItoSR.json.bin	2500	E10	
+PEA	PEA	-	PEA.json.bin	2500	E06	
+RESET	RESET	-	RESET.json.bin	2500	E11	
+ROL.b	ROL	b	ROL.b.json.bin	2500	E08	
+ROL.l	ROL	l	ROL.l.json.bin	2500	E08	
+ROL.w	ROL	w	ROL.w.json.bin	2500	E08	
+ROR.b	ROR	b	ROR.b.json.bin	2500	E08	
+ROR.l	ROR	l	ROR.l.json.bin	2500	E08	
+ROR.w	ROR	w	ROR.w.json.bin	2500	E08	
+ROXL.b	ROXL	b	ROXL.b.json.bin	2500	E08	
+ROXL.l	ROXL	l	ROXL.l.json.bin	2500	E08	
+ROXL.w	ROXL	w	ROXL.w.json.bin	2500	E08	
+ROXR.b	ROXR	b	ROXR.b.json.bin	2500	E08	
+ROXR.l	ROXR	l	ROXR.l.json.bin	2500	E08	
+ROXR.w	ROXR	w	ROXR.w.json.bin	2500	E08	
+RTE	RTE	-	RTE.json.bin	2500	E11	
+RTR	RTR	-	RTR.json.bin	2500	E09	
+RTS	RTS	-	RTS.json.bin	2500	E09	
+SBCD	SBCD	-	SBCD.json.bin	2500	E08	
+STOP	STOP	-	STOP.json.bin	2500	E11	
+SUB.b	SUB	b	SUB.b.json.bin	2500	E07	SUBI/SUBQ idem (a confirmer)
+SUB.l	SUB	l	SUB.l.json.bin	2500	E07	SUBI/SUBQ idem (a confirmer)
+SUB.w	SUB	w	SUB.w.json.bin	2500	E07	SUBI/SUBQ idem (a confirmer)
+SUBA.l	SUBA	l	SUBA.l.json.bin	2500	E07	
+SUBA.w	SUBA	w	SUBA.w.json.bin	2500	E07	
+SUBX.b	SUBX	b	SUBX.b.json.bin	2500	E07	
+SUBX.l	SUBX	l	SUBX.l.json.bin	2500	E07	
+SUBX.w	SUBX	w	SUBX.w.json.bin	2500	E07	
+SWAP	SWAP	-	SWAP.json.bin	2500	E06	
+Scc	Scc	-	Scc.json.bin	2500	E09	
+TAS	TAS	-	TAS.json.bin	2500	E10	SST: timing RMW 5 cycles non modelise par MAME - exception connue
+TRAP	TRAP	-	TRAP.json.bin	2500	E11	
+TRAPV	TRAPV	-	TRAPV.json.bin	2500	E11	SST: comportement douteux (bit S) - exception connue
+TST.b	TST	b	TST.b.json.bin	2500	E07	
+TST.l	TST	l	TST.l.json.bin	2500	E07	
+TST.w	TST	w	TST.w.json.bin	2500	E07	
+UNLINK	UNLINK	-	UNLINK.json.bin	2500	E06	UNLK

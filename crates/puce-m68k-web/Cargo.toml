@@ -1,0 +1,17 @@
+[package]
+name = "puce-m68k-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+description = "puce-m68k web front end server (HTTP + WebSocket)"
+
+[[bin]]
+name = "m68k-web"
+path = "src/main.rs"
+
+[dependencies]
+puce-m68k = { path = "../puce-m68k", features = ["inspect", "disasm", "std"] }
+puce-m68k-machines = { path = "../puce-m68k-machines" }

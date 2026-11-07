@@ -1,0 +1,21 @@
+[package]
+name = "puce-m68k"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Cycle-accurate Motorola 68000 CPU core: no_std, no unsafe, no dependency"
+readme = "README.md"
+keywords = ["m68k", "68000", "emulator", "cpu", "no_std"]
+categories = ["emulators", "no-std"]
+
+[features]
+default = []
+inspect = []
+disasm = []
+std = []
+
+[dependencies]
+
+[dev-dependencies]

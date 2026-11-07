@@ -1,0 +1,15 @@
+[package]
+name = "puce-m68k-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+description = "puce-m68k compiled to WebAssembly (serverless browser demo)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+puce-m68k = { path = "../puce-m68k" }
