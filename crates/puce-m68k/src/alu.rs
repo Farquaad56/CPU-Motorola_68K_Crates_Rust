@@ -1624,6 +1624,166 @@ pub const fn mul_rules(base: u16, id: InsnId) -> [Rule; N_RULES_MUL] {
     out
 }
 
+// ---------------------------------------------------------------------------------------------
+// DIVU / DIVS. Timing: docs/specs/instr/DIVU.md and DIVS.md (variable idle cycle, `Tok::Nv`).
+// ---------------------------------------------------------------------------------------------
+
+/// Hook of the `DIVU` / `DIVS` plans.
+pub const HK_DIV: u8 = 0x8E;
+
+/// Total clocks of `DIVU` (without the effective address) for a dividend and a non-zero divisor:
+/// 10 on overflow, else 76 + 2 per iteration whose partial dividend has its MSB clear (minus 1 when
+/// the subtraction then succeeds).
+pub fn divu_clocks(dividend: u32, divisor: u16) -> u32 {
+    if (dividend >> 16) >= u32::from(divisor) {
+        return 10;
+    }
+    let mut mcycles = 38;
+    let hdiv = u32::from(divisor) << 16;
+    let mut d = dividend;
+    for _ in 0..15 {
+        if (d as i32) < 0 {
+            d = d.wrapping_shl(1).wrapping_sub(hdiv);
+        } else {
+            d = d.wrapping_shl(1);
+            mcycles += 2;
+            if d >= hdiv {
+                d = d.wrapping_sub(hdiv);
+                mcycles -= 1;
+            }
+        }
+    }
+    mcycles * 2
+}
+
+/// Total clocks of `DIVS` (without the effective address) for a non-zero divisor.
+pub fn divs_clocks(dividend: i32, divisor: i16) -> u32 {
+    let mut mcycles = 6;
+    if dividend < 0 {
+        mcycles += 1;
+    }
+    let adividend = dividend.unsigned_abs();
+    let adivisor = u32::from(divisor.unsigned_abs());
+    if (adividend >> 16) >= adivisor {
+        return (mcycles + 2) * 2;
+    }
+    let mut aquot = adividend / adivisor;
+    mcycles += 55;
+    if divisor >= 0 {
+        if dividend >= 0 {
+            mcycles -= 1;
+        } else {
+            mcycles += 1;
+        }
+    }
+    for _ in 0..15 {
+        if (aquot as u16 as i16) >= 0 {
+            mcycles += 1;
+        }
+        aquot <<= 1;
+    }
+    mcycles * 2
+}
+
+/// Semantics of [`HK_DIV`]. Division by zero (an exception, E11) leaves the operands alone.
+pub fn div_exec(signed: bool, cpu: &mut Cpu) {
+    let ird = cpu.lat.ird;
+    let reg = (ird & 7) as usize;
+    let src = if (ird >> 3) & 7 == 0 {
+        cpu.regs.d[reg] as u16
+    } else {
+        cpu.lat.val as u16
+    };
+    let dn = ((ird >> 9) & 7) as usize;
+    let dividend = cpu.regs.d[dn];
+    cpu.lat.idle = 0;
+    if src == 0 {
+        return;
+    }
+    let mut sr = cpu.regs.sr & !(N | Z | V | C);
+    let total;
+    if signed {
+        let (dd, dv) = (dividend as i32, src as i16);
+        total = divs_clocks(dd, dv);
+        let q = i64::from(dd) / i64::from(dv);
+        if !(-0x8000..=0x7FFF).contains(&q) {
+            sr |= V | N;
+        } else {
+            let r = i64::from(dd) % i64::from(dv);
+            cpu.regs.d[dn] = ((r as u32 & 0xFFFF) << 16) | (q as u32 & 0xFFFF);
+            if q == 0 {
+                sr |= Z;
+            }
+            if q < 0 {
+                sr |= N;
+            }
+        }
+    } else {
+        total = divu_clocks(dividend, src);
+        let dv = u32::from(src);
+        if (dividend >> 16) >= dv {
+            sr |= V | N;
+        } else {
+            let (q, r) = (dividend / dv, dividend % dv);
+            cpu.regs.d[dn] = (r << 16) | q;
+            if q == 0 {
+                sr |= Z;
+            }
+            if q & 0x8000 != 0 {
+                sr |= N;
+            }
+        }
+    }
+    cpu.regs.sr = sr;
+    // the final `np` is a bus cycle of the plan
+    cpu.lat.idle = (total - 4) as u8;
+}
+
+const fn build_div(f: usize) -> Entry {
+    let mut e = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    if f >= 2 {
+        e = push_all(e, ea_read_plan(src_ea(f), Size::Word));
+    }
+    e = push(e, Tok::H(HK_DIV));
+    e = push(e, Tok::Nv);
+    push(e, Tok::Pf)
+}
+
+const fn build_div_plans() -> [Entry; SRC_FORMS] {
+    let empty = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    let mut out = [empty; SRC_FORMS];
+    let mut f = 0;
+    while f < SRC_FORMS {
+        out[f] = build_div(f);
+        f += 1;
+    }
+    out
+}
+
+static DIV_PLANS: [Entry; SRC_FORMS] = build_div_plans();
+
+/// Plan of `DIVU` / `DIVS`.
+pub fn div_plan(cpu: &Cpu) -> Plan {
+    let e = &DIV_PLANS[src_form(cpu.lat.ird)];
+    &e.toks[..e.n]
+}
+
+/// Hook dispatcher of `DIVU` / `DIVS`.
+pub fn div_hook(signed: bool, k: u8, cpu: &mut Cpu) {
+    if k == HK_DIV {
+        div_exec(signed, cpu);
+    } else {
+        let ird = cpu.lat.ird;
+        crate::ea::run_ea_hook(cpu, k, (ird & 7) as u8, Size::Word);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
