@@ -154,6 +154,7 @@ impl Engine {
         // Addresses are resolved in E05; until then every source maps to PC (+2 for the
         // second word of a long access).
         let base = match src {
+            AddrSrc::Pc => regs.pc,
             AddrSrc::EaPlus2 => regs.pc.wrapping_add(2),
             _ => regs.pc,
         };
@@ -177,7 +178,10 @@ impl Engine {
     }
 
     /// Runs one clock and returns the pins driven by the CPU.
-    pub(crate) fn step(&mut self, pins: Pins, regs: &Regs) -> Pins {
+    ///
+    /// A `Pf` token shifts the prefetch queue at clock 3 of its bus cycle, once DTACK is
+    /// acknowledged: `IR = IRC`, `IRC = word read`, `PC += 2`.
+    pub(crate) fn step(&mut self, pins: Pins, regs: &mut Regs) -> Pins {
         self.clocks += 1;
         let Some(cur) = self.current(regs) else {
             let fc = if regs.sr & S != 0 { 5 } else { 1 };
@@ -223,6 +227,11 @@ impl Engine {
             }
         }
         if !wait {
+            if cur.clock == 3 && matches!(self.plan.get(self.idx), Some(Tok::Pf)) {
+                regs.ir = regs.irc;
+                regs.irc = pins.data();
+                regs.pc = regs.pc.wrapping_add(2);
+            }
             self.clk += 1;
             if self.clk >= cur.len {
                 self.advance_token();

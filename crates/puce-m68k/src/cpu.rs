@@ -52,7 +52,12 @@ impl Cpu {
 
     /// Advances one clock. `pins` carries the inputs (DTACK, DATA), the result the outputs.
     pub fn tick(&mut self, pins: Pins) -> Pins {
-        self.engine.step(pins, &self.regs)
+        self.engine.step(pins, &mut self.regs)
+    }
+
+    /// Extension word of the current instruction: IRC, before the `Pf` that consumes it.
+    pub fn ext_word(&self) -> u16 {
+        self.regs.irc
     }
 
     /// True when no plan is running (the next instruction can start).
@@ -320,5 +325,95 @@ mod tests {
         assert_eq!(bus.ticks, 4);
         assert_eq!(cpu.clocks(), 4);
         assert!(!cpu.at_instruction_boundary());
+    }
+
+    fn pf(cpu: &mut Cpu, waits: u8) -> (Probe, u32) {
+        cpu.start_plan(&[Tok::Pf]);
+        let mut bus = Probe {
+            waits,
+            ..Probe::default()
+        };
+        let mut n = 0;
+        while !cpu.at_instruction_boundary() {
+            cpu.tick_bus(&mut bus);
+            n += 1;
+            assert!(n < 50);
+        }
+        (bus, n)
+    }
+
+    #[test]
+    fn e05_03_pf_shifts_queue() {
+        let mut cpu = Cpu::new();
+        cpu.load_state(&sample_state());
+        pf(&mut cpu, 0);
+        assert_eq!(cpu.regs.ir, 0x1234);
+        assert_eq!(cpu.regs.irc, 0xCAFE);
+    }
+
+    #[test]
+    fn e05_03_pf_advances_pc() {
+        let mut cpu = Cpu::new();
+        cpu.load_state(&sample_state());
+        pf(&mut cpu, 0);
+        assert_eq!(cpu.regs.pc, 0x406);
+    }
+
+    #[test]
+    fn e05_03_pf_fc_super() {
+        let mut cpu = Cpu::new();
+        cpu.load_state(&sample_state());
+        let (bus, _) = pf(&mut cpu, 0);
+        assert_eq!(bus.reads[0].1, 6);
+    }
+
+    #[test]
+    fn e05_03_pf_fc_user() {
+        let mut cpu = Cpu::new();
+        cpu.load_state(&sample_state());
+        cpu.regs.sr = 0;
+        let (bus, _) = pf(&mut cpu, 0);
+        assert_eq!(bus.reads[0].1, 2);
+    }
+
+    #[test]
+    fn e05_03_pf_address() {
+        let mut cpu = Cpu::new();
+        cpu.load_state(&sample_state());
+        let (bus, _) = pf(&mut cpu, 0);
+        assert_eq!(bus.reads, std::vec![(0x404, 6, true, true)]);
+    }
+
+    #[test]
+    fn e05_03_pf_4_clocks() {
+        let mut cpu = Cpu::new();
+        cpu.load_state(&sample_state());
+        assert_eq!(pf(&mut cpu, 0).1, 4);
+        assert_eq!(pf(&mut cpu, 2).1, 6);
+        // the queue shifted once per Pf, not once per wait clock
+        assert_eq!(cpu.regs.pc, 0x408);
+    }
+
+    #[test]
+    fn e05_03_ext_word() {
+        let mut cpu = Cpu::new();
+        cpu.load_state(&sample_state());
+        assert_eq!(cpu.ext_word(), 0x1234);
+        pf(&mut cpu, 0);
+        assert_eq!(cpu.ext_word(), 0xCAFE);
+    }
+
+    #[cfg(feature = "inspect")]
+    #[test]
+    fn e05_03_pf_journal() {
+        let mut cpu = Cpu::new();
+        cpu.load_state(&sample_state());
+        pf(&mut cpu, 0);
+        let j = cpu.journal();
+        assert_eq!(j.len(), 1);
+        assert_eq!(
+            (j[0].kind, j[0].fc, j[0].addr, j[0].data),
+            (2, 6, 0x404, 0xCAFE)
+        );
     }
 }
