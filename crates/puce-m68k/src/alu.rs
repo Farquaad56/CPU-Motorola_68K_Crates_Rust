@@ -1025,6 +1025,192 @@ pub const fn x_rules(line: u16, id: InsnId) -> [Rule; N_RULES_X] {
     out
 }
 
+// ---------------------------------------------------------------------------------------------
+// One-operand instructions on a data-alterable operand: NEG, NEGX, NOT, TST.
+// Timing: docs/specs/instr/CLR.md ("CLR, NEGX, NEG, NOT" table) and TST.md.
+// ---------------------------------------------------------------------------------------------
+
+/// One-operand operation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Unary {
+    /// `0 - dst`.
+    Neg,
+    /// `0 - dst - X`.
+    Negx,
+    /// `!dst`.
+    Not,
+    /// Flags of `dst` only.
+    Tst,
+}
+
+/// Hook of the one-operand plans.
+pub const HK_UNARY: u8 = 0x8A;
+
+/// Semantics of [`HK_UNARY`].
+pub fn unary_exec(op: Unary, cpu: &mut Cpu) {
+    let ird = cpu.lat.ird;
+    let size = size_of_ird(ird);
+    let reg = (ird & 7) as usize;
+    let reg_dst = (ird >> 3) & 7 == 0;
+    let x = if reg_dst {
+        cpu.regs.d[reg]
+    } else {
+        cpu.lat.val
+    };
+    let mut sr = cpu.regs.sr;
+    let r = match op {
+        Unary::Neg | Unary::Negx => {
+            let bin = if op == Unary::Negx {
+                u32::from(sr & X != 0)
+            } else {
+                0
+            };
+            let (r, c, v) = sub_flags(size, x, 0, bin);
+            sr &= !(X | N | V | C);
+            if r & size_msb(size) != 0 {
+                sr |= N;
+            }
+            if v {
+                sr |= V;
+            }
+            if c {
+                sr |= C | X;
+            }
+            if op == Unary::Neg {
+                if r & size_mask(size) == 0 {
+                    sr |= Z;
+                } else {
+                    sr &= !Z;
+                }
+            } else if r & size_mask(size) != 0 {
+                sr &= !Z;
+            }
+            r
+        }
+        Unary::Not | Unary::Tst => {
+            let r = if op == Unary::Not { !x } else { x } & size_mask(size);
+            sr &= !(N | Z | V | C);
+            sr |= nz_flags(size, r);
+            r
+        }
+    };
+    cpu.regs.sr = sr;
+    if op != Unary::Tst {
+        if reg_dst {
+            set_dn(cpu, reg, size, r);
+        } else {
+            cpu.lat.val = r;
+        }
+    }
+}
+
+const fn build_unary(s: usize, f: usize, write: bool) -> Entry {
+    let size = size_of_index(s);
+    let mut e = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    if f > 0 {
+        e = push_all(e, ea_read_plan(imm_ea(f), size));
+    }
+    e = push(e, Tok::H(HK_UNARY));
+    e = push(e, Tok::Pf);
+    if f == 0 {
+        // long on a register: `np n` (TST has no extra cycle)
+        if s == 2 && write {
+            e = push(e, Tok::N(2));
+        }
+        e
+    } else if write {
+        push_write(e, s)
+    } else {
+        e
+    }
+}
+
+const N_UNARY: usize = 3 * IMM_FORMS;
+
+const fn build_unary_plans(write: bool) -> [Entry; N_UNARY] {
+    let empty = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    let mut out = [empty; N_UNARY];
+    let mut s = 0;
+    while s < 3 {
+        let mut f = 0;
+        while f < IMM_FORMS {
+            out[s * IMM_FORMS + f] = build_unary(s, f, write);
+            f += 1;
+        }
+        s += 1;
+    }
+    out
+}
+
+static UNARY_RMW: [Entry; N_UNARY] = build_unary_plans(true);
+static UNARY_TST: [Entry; N_UNARY] = build_unary_plans(false);
+
+/// Plan of `NEG` / `NEGX` / `NOT` (read-modify-write) or `TST` (`test` = true).
+pub fn unary_plan(cpu: &Cpu, test: bool) -> Plan {
+    let ird = cpu.lat.ird;
+    let t = if test { &UNARY_TST } else { &UNARY_RMW };
+    let e = &t[size_index(ird) * IMM_FORMS + imm_form(ird)];
+    &e.toks[..e.n]
+}
+
+/// Hook dispatcher of the one-operand instructions.
+pub fn unary_hook(op: Unary, k: u8, cpu: &mut Cpu) {
+    match k {
+        HK_UNARY => unary_exec(op, cpu),
+        HK_SHIFT16 => cpu.lat.val >>= 16,
+        _ => {
+            let ird = cpu.lat.ird;
+            crate::ea::run_ea_hook(cpu, k, (ird & 7) as u8, size_of_ird(ird));
+        }
+    }
+}
+
+/// Number of rules of a one-operand instruction.
+pub const N_RULES_UNARY: usize = 3 * IMM_FORMS;
+
+/// Decoding rules of `base | size << 6 | ea` over the data-alterable modes.
+pub const fn unary_rules(base: u16, id: InsnId) -> [Rule; N_RULES_UNARY] {
+    let mut out = [Rule {
+        mask: 0,
+        value: 0,
+        id: InsnId::ILLEGAL,
+        variant: 0,
+    }; N_RULES_UNARY];
+    let mut k = 0;
+    let mut s = 0;
+    while s < 3 {
+        let mut f = 0;
+        while f < IMM_FORMS {
+            let (m, v): (u16, u16) = match f {
+                0 => (0x38, 0),
+                1 => (0x38, 2 << 3),
+                2 => (0x38, 3 << 3),
+                3 => (0x38, 4 << 3),
+                4 => (0x38, 5 << 3),
+                5 => (0x38, 6 << 3),
+                6 => (0x3F, 0x38),
+                _ => (0x3F, 0x39),
+            };
+            out[k] = Rule {
+                mask: 0xFFC0 | m,
+                value: base | ((s as u16) << 6) | v,
+                id,
+                variant: 0,
+            };
+            k += 1;
+            f += 1;
+        }
+        s += 1;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
