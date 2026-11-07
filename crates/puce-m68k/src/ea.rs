@@ -177,45 +177,101 @@ pub const HK_AN_PREDEC: u8 = 0x02;
 /// Hook: `An += size` after the access (2 for a byte access on A7).
 pub const HK_AN_POSTINC: u8 = 0x03;
 
-/// Micro-cycle plan that fetches an operand at `ea` (simple modes only).
-///
-/// The plans do not depend on the register number: the hooks (executed by the semantic layer,
-/// E05-05) read it from the instruction. Timing from `docs/specs/instr/_EA.md`: `Dn`/`An` take no
-/// clock, `(An)` and `(An)+` one bus cycle (two for a long), `-(An)` adds an internal cycle of 2
-/// clocks before the read. The A7 byte rule (step 2 instead of 1) lives in the hooks, not here.
-/// Modes not covered yet (E05-04b) return an empty plan.
-pub fn ea_read_plan(ea: Ea, size: Size) -> Plan {
-    use Tok::*;
-    match (ea, size) {
-        (Ea::Ind(_), Size::Byte) => &[H(HK_EA_AN), Rb(A)],
-        (Ea::Ind(_), Size::Word) => &[H(HK_EA_AN), Rw(A)],
-        (Ea::Ind(_), Size::Long) => &[H(HK_EA_AN), Rl(A)],
-        (Ea::PostInc(_), Size::Byte) => &[H(HK_EA_AN), Rb(A), H(HK_AN_POSTINC)],
-        (Ea::PostInc(_), Size::Word) => &[H(HK_EA_AN), Rw(A), H(HK_AN_POSTINC)],
-        (Ea::PostInc(_), Size::Long) => &[H(HK_EA_AN), Rl(A), H(HK_AN_POSTINC)],
-        (Ea::PreDec(_), Size::Byte) => &[H(HK_AN_PREDEC), N(2), Rb(A)],
-        (Ea::PreDec(_), Size::Word) => &[H(HK_AN_PREDEC), N(2), Rw(A)],
-        (Ea::PreDec(_), Size::Long) => &[H(HK_AN_PREDEC), N(2), Rl(A)],
-        _ => &[],
+/// Hook: `ea = d16 + An` using the extension word (IRC, read before the `Pf` that consumes it).
+pub const HK_EA_DISP: u8 = 0x04;
+/// Hook: `ea = d8 + An + Xn` using the extension word (the index size does not change the timing).
+pub const HK_EA_INDEX: u8 = 0x05;
+/// Hook: `ea = sign-extended extension word` (absolute short).
+pub const HK_EA_ABSW: u8 = 0x06;
+/// Hook: `ea = extension word << 16` (first word of an absolute long).
+pub const HK_EA_ABSL_HI: u8 = 0x07;
+/// Hook: `ea |= extension word` (second word of an absolute long).
+pub const HK_EA_ABSL_LO: u8 = 0x08;
+/// Hook: `ea = d16 + PC` using the extension word.
+pub const HK_EA_PCDISP: u8 = 0x09;
+/// Hook: `ea = d8 + PC + Xn` using the extension word.
+pub const HK_EA_PCINDEX: u8 = 0x0A;
+/// Hook: immediate operand = extension word (byte or word immediate).
+pub const HK_IMM_W: u8 = 0x0B;
+/// Hook: immediate operand = extension word << 16 (first word of a long immediate).
+pub const HK_IMM_L_HI: u8 = 0x0C;
+/// Hook: immediate operand |= extension word (second word of a long immediate).
+pub const HK_IMM_L_LO: u8 = 0x0D;
+
+/// Number of extension words (0, 1 or 2) that follow the opcode for this mode and size.
+pub const fn ea_ext_words(ea: Ea, size: Size) -> u8 {
+    match ea {
+        Ea::DataReg(_) | Ea::AddrReg(_) | Ea::Ind(_) | Ea::PostInc(_) | Ea::PreDec(_) => 0,
+        Ea::Disp(_) | Ea::Index(_) | Ea::AbsW | Ea::PcDisp | Ea::PcIndex => 1,
+        Ea::AbsL => 2,
+        Ea::Imm => match size {
+            Size::Long => 2,
+            _ => 1,
+        },
     }
 }
 
-/// Micro-cycle plan that stores an operand at `ea`: same address phase as [`ea_read_plan`],
-/// with a write token (`Wb`/`Ww`/`Wl`) in place of the read.
-pub fn ea_write_plan(ea: Ea, size: Size) -> Plan {
-    use Tok::*;
-    match (ea, size) {
-        (Ea::Ind(_), Size::Byte) => &[H(HK_EA_AN), Wb(A)],
-        (Ea::Ind(_), Size::Word) => &[H(HK_EA_AN), Ww(A)],
-        (Ea::Ind(_), Size::Long) => &[H(HK_EA_AN), Wl(A)],
-        (Ea::PostInc(_), Size::Byte) => &[H(HK_EA_AN), Wb(A), H(HK_AN_POSTINC)],
-        (Ea::PostInc(_), Size::Word) => &[H(HK_EA_AN), Ww(A), H(HK_AN_POSTINC)],
-        (Ea::PostInc(_), Size::Long) => &[H(HK_EA_AN), Wl(A), H(HK_AN_POSTINC)],
-        (Ea::PreDec(_), Size::Byte) => &[H(HK_AN_PREDEC), N(2), Wb(A)],
-        (Ea::PreDec(_), Size::Word) => &[H(HK_AN_PREDEC), N(2), Ww(A)],
-        (Ea::PreDec(_), Size::Long) => &[H(HK_AN_PREDEC), N(2), Wl(A)],
-        _ => &[],
+// One match for reads and one for writes: only the bus token differs (`$b`, `$w`, `$l`).
+macro_rules! ea_plans {
+    ($ea:expr, $size:expr, $b:ident, $w:ident, $l:ident) => {{
+        use Tok::*;
+        match ($ea, $size) {
+            (Ea::Ind(_), Size::Byte) => &[H(HK_EA_AN), $b(A)],
+            (Ea::Ind(_), Size::Word) => &[H(HK_EA_AN), $w(A)],
+            (Ea::Ind(_), Size::Long) => &[H(HK_EA_AN), $l(A)],
+            (Ea::PostInc(_), Size::Byte) => &[H(HK_EA_AN), $b(A), H(HK_AN_POSTINC)],
+            (Ea::PostInc(_), Size::Word) => &[H(HK_EA_AN), $w(A), H(HK_AN_POSTINC)],
+            (Ea::PostInc(_), Size::Long) => &[H(HK_EA_AN), $l(A), H(HK_AN_POSTINC)],
+            (Ea::PreDec(_), Size::Byte) => &[H(HK_AN_PREDEC), N(2), $b(A)],
+            (Ea::PreDec(_), Size::Word) => &[H(HK_AN_PREDEC), N(2), $w(A)],
+            (Ea::PreDec(_), Size::Long) => &[H(HK_AN_PREDEC), N(2), $l(A)],
+            (Ea::Disp(_), Size::Byte) => &[H(HK_EA_DISP), Pf, $b(A)],
+            (Ea::Disp(_), Size::Word) => &[H(HK_EA_DISP), Pf, $w(A)],
+            (Ea::Disp(_), Size::Long) => &[H(HK_EA_DISP), Pf, $l(A)],
+            (Ea::Index(_), Size::Byte) => &[H(HK_EA_INDEX), N(2), Pf, $b(A)],
+            (Ea::Index(_), Size::Word) => &[H(HK_EA_INDEX), N(2), Pf, $w(A)],
+            (Ea::Index(_), Size::Long) => &[H(HK_EA_INDEX), N(2), Pf, $l(A)],
+            (Ea::AbsW, Size::Byte) => &[H(HK_EA_ABSW), Pf, $b(A)],
+            (Ea::AbsW, Size::Word) => &[H(HK_EA_ABSW), Pf, $w(A)],
+            (Ea::AbsW, Size::Long) => &[H(HK_EA_ABSW), Pf, $l(A)],
+            (Ea::AbsL, Size::Byte) => &[H(HK_EA_ABSL_HI), Pf, H(HK_EA_ABSL_LO), Pf, $b(A)],
+            (Ea::AbsL, Size::Word) => &[H(HK_EA_ABSL_HI), Pf, H(HK_EA_ABSL_LO), Pf, $w(A)],
+            (Ea::AbsL, Size::Long) => &[H(HK_EA_ABSL_HI), Pf, H(HK_EA_ABSL_LO), Pf, $l(A)],
+            (Ea::PcDisp, Size::Byte) => &[H(HK_EA_PCDISP), Pf, $b(A)],
+            (Ea::PcDisp, Size::Word) => &[H(HK_EA_PCDISP), Pf, $w(A)],
+            (Ea::PcDisp, Size::Long) => &[H(HK_EA_PCDISP), Pf, $l(A)],
+            (Ea::PcIndex, Size::Byte) => &[H(HK_EA_PCINDEX), N(2), Pf, $b(A)],
+            (Ea::PcIndex, Size::Word) => &[H(HK_EA_PCINDEX), N(2), Pf, $w(A)],
+            (Ea::PcIndex, Size::Long) => &[H(HK_EA_PCINDEX), N(2), Pf, $l(A)],
+            _ => &[],
+        }
+    }};
+}
+
+/// Micro-cycle plan that fetches an operand at `ea`.
+///
+/// The plans do not depend on the register number: the hooks (executed by the semantic layer,
+/// E05-05) read it from the instruction. Timing from `docs/specs/instr/_EA.md` (and, for the
+/// PC-relative modes, M68000UM chapter 8: same totals as the `An` forms, see
+/// `docs/qa/inbox/E04-03-Q1.md`): `Dn`/`An` take no clock, `(An)` and `(An)+` one bus cycle (two
+/// for a long), `-(An)` and the index modes add an internal cycle of 2 clocks, every extension
+/// word is a `Pf` (4 clocks). A hook that reads the extension word is placed BEFORE the `Pf` that
+/// consumes it (`Cpu::ext_word` is IRC until that `Pf`). The A7 byte rule (step 2 instead of 1)
+/// lives in the hooks, not here. `Dn`/`An` return an empty plan.
+pub fn ea_read_plan(ea: Ea, size: Size) -> Plan {
+    if let Ea::Imm = ea {
+        return match size {
+            Size::Long => &[Tok::H(HK_IMM_L_HI), Tok::Pf, Tok::H(HK_IMM_L_LO), Tok::Pf],
+            _ => &[Tok::H(HK_IMM_W), Tok::Pf],
+        };
     }
+    ea_plans!(ea, size, Rb, Rw, Rl)
+}
+
+/// Micro-cycle plan that stores an operand at `ea`: same address phase as [`ea_read_plan`],
+/// with a write token (`Wb`/`Ww`/`Wl`) in place of the read. Immediate is not alterable: empty.
+pub fn ea_write_plan(ea: Ea, size: Size) -> Plan {
+    ea_plans!(ea, size, Wb, Ww, Wl)
 }
 
 #[cfg(test)]
@@ -273,6 +329,94 @@ mod tests {
         assert!(ea_write_plan(Ea::PostInc(0), Size::Long).contains(&Tok::H(HK_AN_POSTINC)));
         assert!(ea_read_plan(Ea::PreDec(0), Size::Word).contains(&Tok::H(HK_AN_PREDEC)));
         assert!(!ea_read_plan(Ea::Ind(0), Size::Word).contains(&Tok::H(HK_AN_POSTINC)));
+    }
+
+    fn count(p: Plan, f: fn(&Tok) -> bool) -> usize {
+        p.iter().filter(|t| f(t)).count()
+    }
+    fn is_pf(t: &Tok) -> bool {
+        matches!(t, Tok::Pf)
+    }
+
+    #[test]
+    fn e05_04b_disp_word_read() {
+        let p = ea_read_plan(Ea::Disp(1), Size::Word);
+        assert_eq!(count(p, is_pf), 1);
+        assert!(p.contains(&Tok::Rw(AddrSrc::Ea)));
+        assert_eq!(plan_clocks(p), 8); // _EA.md line 140
+    }
+
+    #[test]
+    fn e05_04b_index_internal() {
+        let p = ea_read_plan(Ea::Index(0), Size::Word);
+        assert!(p.contains(&Tok::N(2)));
+        assert_eq!(plan_clocks(p), 10); // _EA.md line 141
+        assert_eq!(plan_clocks(ea_read_plan(Ea::Index(0), Size::Long)), 14); // line 152
+    }
+
+    #[test]
+    fn e05_04b_abs_w_long() {
+        let p = ea_read_plan(Ea::AbsW, Size::Long);
+        assert_eq!(count(p, is_pf), 1);
+        assert!(p.contains(&Tok::Rl(AddrSrc::Ea)));
+        assert_eq!(plan_clocks(p), 12); // line 153
+    }
+
+    #[test]
+    fn e05_04b_abs_l_ext_words() {
+        assert_eq!(ea_ext_words(Ea::AbsL, Size::Word), 2);
+        let p = ea_read_plan(Ea::AbsL, Size::Word);
+        assert_eq!(count(p, is_pf), 2);
+        assert_eq!(plan_clocks(p), 12); // line 143
+        assert_eq!(plan_clocks(ea_read_plan(Ea::AbsL, Size::Long)), 16); // line 154
+    }
+
+    #[test]
+    fn e05_04b_imm_long_ext_words() {
+        assert_eq!(ea_ext_words(Ea::Imm, Size::Long), 2);
+        assert_eq!(ea_ext_words(Ea::Imm, Size::Byte), 1);
+        assert_eq!(ea_ext_words(Ea::Imm, Size::Word), 1);
+        assert_eq!(count(ea_read_plan(Ea::Imm, Size::Long), is_pf), 2);
+        assert_eq!(plan_clocks(ea_read_plan(Ea::Imm, Size::Long)), 8); // line 155
+        assert_eq!(plan_clocks(ea_read_plan(Ea::Imm, Size::Byte)), 4); // line 144
+        assert!(ea_write_plan(Ea::Imm, Size::Word).is_empty());
+    }
+
+    #[test]
+    fn e05_04b_pc_disp() {
+        let p = ea_read_plan(Ea::PcDisp, Size::Word);
+        assert_eq!(count(p, is_pf), 1);
+        assert!(p.contains(&Tok::Rw(AddrSrc::Ea)));
+        assert_eq!(plan_clocks(p), 8); // M68000UM: same as d16(An)
+        assert_eq!(plan_clocks(ea_read_plan(Ea::PcIndex, Size::Word)), 10);
+    }
+
+    #[test]
+    fn e05_04b_ext_words_table() {
+        let modes = [
+            (Ea::DataReg(0), 0),
+            (Ea::AddrReg(0), 0),
+            (Ea::Ind(0), 0),
+            (Ea::PostInc(0), 0),
+            (Ea::PreDec(0), 0),
+            (Ea::Disp(0), 1),
+            (Ea::Index(0), 1),
+            (Ea::AbsW, 1),
+            (Ea::AbsL, 2),
+            (Ea::PcDisp, 1),
+            (Ea::PcIndex, 1),
+            (Ea::Imm, 1),
+        ];
+        for (ea, n) in modes {
+            assert_eq!(ea_ext_words(ea, Size::Word), n, "{:?}", ea);
+            // the plan fetches exactly that many extension words (Pf)
+            assert_eq!(
+                count(ea_read_plan(ea, Size::Word), is_pf),
+                n as usize,
+                "{:?}",
+                ea
+            );
+        }
     }
 
     #[test]
