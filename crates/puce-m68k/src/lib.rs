@@ -16,6 +16,7 @@ pub mod cpu;
 pub mod engine;
 pub mod pins;
 pub mod regs;
+pub mod state;
 // pub mod decode;
 // pub mod ea;
 // pub mod alu;

@@ -8,6 +8,28 @@ use crate::regs::{Regs, S};
 use mcycle::{bus_pins, idle_pins, BusKind};
 use plan::{AddrSrc, Plan, Tok};
 
+/// What the engine does at its next clock.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Cur {
+    /// `None` for an internal cycle.
+    pub(crate) kind: Option<BusKind>,
+    /// Length of the whole token in clocks.
+    pub(crate) len: u8,
+    pub(crate) addr: u32,
+    pub(crate) fc: u8,
+    pub(crate) uds: bool,
+    pub(crate) lds: bool,
+    /// Clock inside the current bus cycle (0..=3) for a bus token.
+    pub(crate) clock: u8,
+}
+
+impl Cur {
+    /// True for a write cycle.
+    pub(crate) fn is_write(&self) -> bool {
+        self.kind == Some(BusKind::Write)
+    }
+}
+
 /// Private state of the plan executor.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Engine {
@@ -65,24 +87,23 @@ impl Engine {
         self.skip_hooks();
     }
 
-    /// Runs one clock and returns the pins driven by the CPU.
-    pub(crate) fn step(&mut self, pins: Pins, regs: &Regs) -> Pins {
-        self.clocks += 1;
+    /// Describes the next clock, or `None` when the plan is finished.
+    pub(crate) fn current(&self, regs: &Regs) -> Option<Cur> {
         let supervisor = regs.sr & S != 0;
         let fc_data = if supervisor { 5 } else { 1 };
         let fc_prog = if supervisor { 6 } else { 2 };
-        let Some(&tok) = self.plan.get(self.idx) else {
-            return idle_pins(fc_data, self.last_addr);
-        };
-        // (kind, token length in clocks, base address, function code, byte access)
+        let tok = *self.plan.get(self.idx)?;
         let (kind, len, src, fc, byte) = match tok {
             Tok::N(n) => {
-                let out = idle_pins(fc_data, self.last_addr);
-                self.clk += 1;
-                if self.clk >= n {
-                    self.advance_token();
-                }
-                return out;
+                return Some(Cur {
+                    kind: None,
+                    len: n,
+                    addr: self.last_addr,
+                    fc: fc_data,
+                    uds: false,
+                    lds: false,
+                    clock: self.clk,
+                });
             }
             Tok::H(_) => unreachable!("hooks are skipped"),
             Tok::Pf => (BusKind::Read, 4, AddrSrc::Pc, fc_prog, false),
@@ -100,22 +121,46 @@ impl Engine {
             AddrSrc::EaPlus2 => regs.pc.wrapping_add(2),
             _ => regs.pc,
         };
-        let second_word = self.clk >= 4;
-        let addr = base.wrapping_add(if second_word { 2 } else { 0 });
-        let clock = self.clk % 4;
+        let addr = base.wrapping_add(if self.clk >= 4 { 2 } else { 0 });
         let (uds, lds) = if byte {
             let odd = addr & 1 != 0;
             (!odd, odd)
         } else {
             (true, true)
         };
+        Some(Cur {
+            kind: Some(kind),
+            len,
+            addr,
+            fc,
+            uds,
+            lds,
+            clock: self.clk % 4,
+        })
+    }
+
+    /// Runs one clock and returns the pins driven by the CPU.
+    pub(crate) fn step(&mut self, pins: Pins, regs: &Regs) -> Pins {
+        self.clocks += 1;
+        let Some(cur) = self.current(regs) else {
+            let fc = if regs.sr & S != 0 { 5 } else { 1 };
+            return idle_pins(fc, self.last_addr);
+        };
+        let Some(kind) = cur.kind else {
+            let out = idle_pins(cur.fc, self.last_addr);
+            self.clk += 1;
+            if self.clk >= cur.len {
+                self.advance_token();
+            }
+            return out;
+        };
         // DTACK is sampled at clock 2 of every bus cycle: repeat the clock while it is low.
-        let wait = clock == 2 && !pins.dtack();
-        let out = bus_pins(kind, clock, addr, fc, uds, lds, 0);
-        self.last_addr = addr;
+        let wait = cur.clock == 2 && !pins.dtack();
+        let out = bus_pins(kind, cur.clock, cur.addr, cur.fc, cur.uds, cur.lds, 0);
+        self.last_addr = cur.addr;
         if !wait {
             self.clk += 1;
-            if self.clk >= len {
+            if self.clk >= cur.len {
                 self.advance_token();
             }
         }
