@@ -2507,6 +2507,36 @@ pub const fn nbcd_rules(id: InsnId) -> [Rule; N_RULES_NBCD] {
     out
 }
 
+// ---------------------------------------------------------------------------------------------
+// Conditions (Bcc, DBcc, Scc).
+// ---------------------------------------------------------------------------------------------
+
+/// Evaluates condition `cond` (0 = T, 1 = F, 2 = HI ... 15 = LE) against the status register.
+pub fn cond_true(cond: u16, sr: u16) -> bool {
+    let c = sr & C != 0;
+    let v = sr & V != 0;
+    let z = sr & Z != 0;
+    let n = sr & N != 0;
+    match cond & 15 {
+        0 => true,
+        1 => false,
+        2 => !c && !z,
+        3 => c || z,
+        4 => !c,
+        5 => c,
+        6 => !z,
+        7 => z,
+        8 => !v,
+        9 => v,
+        10 => !n,
+        11 => n,
+        12 => n == v,
+        13 => n != v,
+        14 => !z && n == v,
+        _ => z || n != v,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

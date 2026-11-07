@@ -19,6 +19,7 @@ pub mod i_addx;
 pub mod i_and;
 pub mod i_asl;
 pub mod i_asr;
+pub mod i_bcc;
 pub mod i_bchg;
 pub mod i_bclr;
 pub mod i_bset;
@@ -113,6 +114,7 @@ const GROUPS: &[&[Rule]] = &[
     i_abcd::RULES,
     i_sbcd::RULES,
     i_nbcd::RULES,
+    i_bcc::RULES,
     // @groups
 ];
 
@@ -167,6 +169,7 @@ const GROUPS: &[&[Rule]] = &[
     i_abcd::RULES,
     i_sbcd::RULES,
     i_nbcd::RULES,
+    i_bcc::RULES,
     // @tgroups
     testing::RULES,
 ];
@@ -263,6 +266,7 @@ pub(crate) fn plan_for(id: InsnId, variant: u8, cpu: &mut Cpu) -> Plan {
         i_abcd::ID => i_abcd::plan(variant, cpu),
         i_sbcd::ID => i_sbcd::plan(variant, cpu),
         i_nbcd::ID => i_nbcd::plan(variant, cpu),
+        i_bcc::ID => i_bcc::plan(variant, cpu),
         // @plans
         #[cfg(test)]
         testing::ID => testing::plan(variant),
@@ -322,6 +326,7 @@ pub(crate) fn run_hook(id: InsnId, k: u8, cpu: &mut Cpu) {
         i_abcd::ID => i_abcd::hook(k, cpu),
         i_sbcd::ID => i_sbcd::hook(k, cpu),
         i_nbcd::ID => i_nbcd::hook(k, cpu),
+        i_bcc::ID => i_bcc::hook(k, cpu),
         // @hooks
         #[cfg(test)]
         testing::ID => testing::hook(k, cpu),
