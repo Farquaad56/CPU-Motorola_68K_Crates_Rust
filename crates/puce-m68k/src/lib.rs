@@ -22,7 +22,7 @@ pub mod pins;
 pub mod regs;
 pub mod state;
 // pub mod sem;
-// pub mod exception;
+pub mod exception;
 #[cfg(feature = "inspect")]
 pub mod probe;
 // pub mod disasm;

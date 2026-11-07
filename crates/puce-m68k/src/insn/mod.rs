@@ -17,6 +17,8 @@ pub mod i_add;
 pub mod i_adda;
 pub mod i_addx;
 pub mod i_and;
+pub mod i_anditoccr;
+pub mod i_anditosr;
 pub mod i_asl;
 pub mod i_asr;
 pub mod i_bcc;
@@ -32,6 +34,8 @@ pub mod i_dbcc;
 pub mod i_divs;
 pub mod i_divu;
 pub mod i_eor;
+pub mod i_eoritoccr;
+pub mod i_eoritosr;
 pub mod i_exg;
 pub mod i_ext;
 pub mod i_jmp;
@@ -42,9 +46,14 @@ pub mod i_lsl;
 pub mod i_lsr;
 pub mod i_move;
 pub mod i_movea;
+pub mod i_movefromsr;
+pub mod i_movefromusp;
 pub mod i_movem;
 pub mod i_movep;
 pub mod i_moveq;
+pub mod i_movetoccr;
+pub mod i_movetosr;
+pub mod i_movetousp;
 pub mod i_muls;
 pub mod i_mulu;
 pub mod i_nbcd;
@@ -52,6 +61,8 @@ pub mod i_neg;
 pub mod i_negx;
 pub mod i_not;
 pub mod i_or;
+pub mod i_oritoccr;
+pub mod i_oritosr;
 pub mod i_pea;
 pub mod i_rol;
 pub mod i_ror;
@@ -65,6 +76,7 @@ pub mod i_sub;
 pub mod i_suba;
 pub mod i_subx;
 pub mod i_swap;
+pub mod i_tas;
 pub mod i_tst;
 pub mod i_unlink;
 // @mods
@@ -129,6 +141,18 @@ const GROUPS: &[&[Rule]] = &[
     i_jsr::RULES,
     i_rts::RULES,
     i_rtr::RULES,
+    i_anditoccr::RULES,
+    i_anditosr::RULES,
+    i_oritoccr::RULES,
+    i_oritosr::RULES,
+    i_eoritoccr::RULES,
+    i_eoritosr::RULES,
+    i_movetoccr::RULES,
+    i_movetosr::RULES,
+    i_movefromsr::RULES,
+    i_movetousp::RULES,
+    i_movefromusp::RULES,
+    i_tas::RULES,
     // @groups
 ];
 
@@ -191,6 +215,18 @@ const GROUPS: &[&[Rule]] = &[
     i_jsr::RULES,
     i_rts::RULES,
     i_rtr::RULES,
+    i_anditoccr::RULES,
+    i_anditosr::RULES,
+    i_oritoccr::RULES,
+    i_oritosr::RULES,
+    i_eoritoccr::RULES,
+    i_eoritosr::RULES,
+    i_movetoccr::RULES,
+    i_movetosr::RULES,
+    i_movefromsr::RULES,
+    i_movetousp::RULES,
+    i_movefromusp::RULES,
+    i_tas::RULES,
     // @tgroups
     testing::RULES,
 ];
@@ -295,6 +331,18 @@ pub(crate) fn plan_for(id: InsnId, variant: u8, cpu: &mut Cpu) -> Plan {
         i_jsr::ID => i_jsr::plan(variant, cpu),
         i_rts::ID => i_rts::plan(variant, cpu),
         i_rtr::ID => i_rtr::plan(variant, cpu),
+        i_anditoccr::ID => i_anditoccr::plan(variant, cpu),
+        i_anditosr::ID => i_anditosr::plan(variant, cpu),
+        i_oritoccr::ID => i_oritoccr::plan(variant, cpu),
+        i_oritosr::ID => i_oritosr::plan(variant, cpu),
+        i_eoritoccr::ID => i_eoritoccr::plan(variant, cpu),
+        i_eoritosr::ID => i_eoritosr::plan(variant, cpu),
+        i_movetoccr::ID => i_movetoccr::plan(variant, cpu),
+        i_movetosr::ID => i_movetosr::plan(variant, cpu),
+        i_movefromsr::ID => i_movefromsr::plan(variant, cpu),
+        i_movetousp::ID => i_movetousp::plan(variant, cpu),
+        i_movefromusp::ID => i_movefromusp::plan(variant, cpu),
+        i_tas::ID => i_tas::plan(variant, cpu),
         // @plans
         #[cfg(test)]
         testing::ID => testing::plan(variant),
@@ -362,6 +410,18 @@ pub(crate) fn run_hook(id: InsnId, k: u8, cpu: &mut Cpu) {
         i_jsr::ID => i_jsr::hook(k, cpu),
         i_rts::ID => i_rts::hook(k, cpu),
         i_rtr::ID => i_rtr::hook(k, cpu),
+        i_anditoccr::ID => i_anditoccr::hook(k, cpu),
+        i_anditosr::ID => i_anditosr::hook(k, cpu),
+        i_oritoccr::ID => i_oritoccr::hook(k, cpu),
+        i_oritosr::ID => i_oritosr::hook(k, cpu),
+        i_eoritoccr::ID => i_eoritoccr::hook(k, cpu),
+        i_eoritosr::ID => i_eoritosr::hook(k, cpu),
+        i_movetoccr::ID => i_movetoccr::hook(k, cpu),
+        i_movetosr::ID => i_movetosr::hook(k, cpu),
+        i_movefromsr::ID => i_movefromsr::hook(k, cpu),
+        i_movetousp::ID => i_movetousp::hook(k, cpu),
+        i_movefromusp::ID => i_movefromusp::hook(k, cpu),
+        i_tas::ID => i_tas::hook(k, cpu),
         // @hooks
         #[cfg(test)]
         testing::ID => testing::hook(k, cpu),

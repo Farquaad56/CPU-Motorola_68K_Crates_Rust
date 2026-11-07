@@ -2602,6 +2602,281 @@ pub const fn scc_rules(id: InsnId) -> [Rule; N_RULES_SCC] {
     out
 }
 
+// ---------------------------------------------------------------------------------------------
+// System instructions: ANDI/ORI/EORI to CCR and SR, MOVE to CCR/SR, MOVE from SR, MOVE USP, TAS.
+// Timing: docs/specs/instr/ANDItoCCR.md, MOVEtoCCR.md, MOVEfromSR.md, MOVEtoUSP.md, TAS.md.
+// ---------------------------------------------------------------------------------------------
+
+/// Hook: keeps the immediate word (before the `Pf` that consumes it).
+pub const HK_SRI_SAVE: u8 = 0x92;
+/// Hook: PC -= 2 (the first `np` of `ANDI to SR` and friends is a dummy re-read of PC).
+pub const HK_SRI_BACK: u8 = 0x93;
+/// Hook: applies the logic operation to CCR or SR.
+pub const HK_SRI_APPLY: u8 = 0x94;
+/// Hook: loads CCR or SR from the source word.
+pub const HK_MOVE_SR: u8 = 0x95;
+/// Hook: `MOVE An,USP` / `MOVE USP,An`.
+pub const HK_USP: u8 = 0x96;
+/// Hook: `TAS`.
+pub const HK_TAS: u8 = 0x97;
+
+static SRI_PLAN: [Tok; 7] = [
+    Tok::H(HK_SRI_SAVE),
+    Tok::Pf,
+    Tok::H(HK_SRI_BACK),
+    Tok::N(8),
+    Tok::H(HK_SRI_APPLY),
+    Tok::Pf,
+    Tok::Pf,
+];
+
+/// True when the instruction must raise a privilege violation (user mode).
+fn user_mode(cpu: &Cpu) -> bool {
+    cpu.regs.sr & crate::regs::S == 0
+}
+
+/// Plan of `ANDI/ORI/EORI to CCR` (`to_sr` = false) or `to SR` (privileged).
+pub fn sri_plan(cpu: &Cpu, to_sr: bool) -> Plan {
+    if to_sr && user_mode(cpu) {
+        crate::exception::privilege_violation()
+    } else {
+        &SRI_PLAN
+    }
+}
+
+/// Hook dispatcher of `ANDI/ORI/EORI to CCR/SR`.
+pub fn sri_hook(op: Alu, to_sr: bool, k: u8, cpu: &mut Cpu) {
+    match k {
+        HK_SRI_SAVE => cpu.lat.aux = u32::from(cpu.regs.irc),
+        HK_SRI_BACK => cpu.regs.pc = cpu.regs.pc.wrapping_sub(2),
+        HK_SRI_APPLY => {
+            let imm = cpu.lat.aux as u16;
+            let sr = cpu.regs.sr;
+            let f = |a: u16, b: u16| match op {
+                Alu::And => a & b,
+                Alu::Or => a | b,
+                _ => a ^ b,
+            };
+            if to_sr {
+                cpu.regs.set_sr(f(sr, imm));
+            } else {
+                cpu.regs.sr = (sr & 0xFF00) | (f(sr, imm) & 0x1F);
+            }
+        }
+        _ if crate::exception::is_hook(k) => crate::exception::hook(k, cpu),
+        _ => {}
+    }
+}
+
+const fn build_move_sr(f: usize) -> Entry {
+    let mut e = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    if f >= 2 {
+        e = push_all(e, ea_read_plan(src_ea(f), Size::Word));
+    }
+    e = push(e, Tok::H(HK_MOVE_SR));
+    e = push(e, Tok::N(4));
+    e = push(e, Tok::H(HK_SRI_BACK));
+    e = push(e, Tok::Pf);
+    push(e, Tok::Pf)
+}
+
+const fn build_move_sr_plans() -> [Entry; SRC_FORMS] {
+    let empty = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    let mut out = [empty; SRC_FORMS];
+    let mut f = 0;
+    while f < SRC_FORMS {
+        out[f] = build_move_sr(f);
+        f += 1;
+    }
+    out
+}
+
+static MOVE_SR_PLANS: [Entry; SRC_FORMS] = build_move_sr_plans();
+
+/// Plan of `MOVE <ea>,CCR` (`to_sr` = false) or `MOVE <ea>,SR` (privileged).
+pub fn move_sr_plan(cpu: &Cpu, to_sr: bool) -> Plan {
+    if to_sr && user_mode(cpu) {
+        return crate::exception::privilege_violation();
+    }
+    let e = &MOVE_SR_PLANS[src_form(cpu.lat.ird)];
+    &e.toks[..e.n]
+}
+
+/// Hook dispatcher of `MOVE to CCR/SR`.
+pub fn move_sr_hook(to_sr: bool, k: u8, cpu: &mut Cpu) {
+    let ird = cpu.lat.ird;
+    if k == HK_MOVE_SR {
+        let v = if (ird >> 3) & 7 == 0 {
+            cpu.regs.d[(ird & 7) as usize] as u16
+        } else {
+            cpu.lat.val as u16
+        };
+        if to_sr {
+            cpu.regs.set_sr(v);
+        } else {
+            cpu.regs.sr = (cpu.regs.sr & 0xFF00) | (v & 0x1F);
+        }
+    } else if k == HK_SRI_BACK {
+        cpu.regs.pc = cpu.regs.pc.wrapping_sub(2);
+    } else if crate::exception::is_hook(k) {
+        crate::exception::hook(k, cpu);
+    } else {
+        crate::ea::run_ea_hook(cpu, k, (ird & 7) as u8, Size::Word);
+    }
+}
+
+static MOVE_FROM_SR_REG: [Tok; 3] = [Tok::H(HK_UNARY), Tok::Pf, Tok::N(2)];
+
+/// Plan of `MOVE SR,<ea>`.
+pub fn move_from_sr_plan(cpu: &Cpu) -> Plan {
+    let f = imm_form(cpu.lat.ird);
+    if f == 0 {
+        &MOVE_FROM_SR_REG
+    } else {
+        let e = &UNARY_RMW[IMM_FORMS + f];
+        &e.toks[..e.n]
+    }
+}
+
+/// Hook dispatcher of `MOVE SR,<ea>`.
+pub fn move_from_sr_hook(k: u8, cpu: &mut Cpu) {
+    let ird = cpu.lat.ird;
+    if k == HK_UNARY {
+        let v = u32::from(cpu.regs.sr);
+        if (ird >> 3) & 7 == 0 {
+            set_dn(cpu, (ird & 7) as usize, Size::Word, v);
+        } else {
+            cpu.lat.val = v;
+        }
+    } else {
+        crate::ea::run_ea_hook(cpu, k, (ird & 7) as u8, Size::Word);
+    }
+}
+
+static USP_PLAN: [Tok; 2] = [Tok::H(HK_USP), Tok::Pf];
+
+/// Plan of `MOVE An,USP` / `MOVE USP,An` (privileged).
+pub fn usp_plan(cpu: &Cpu) -> Plan {
+    if user_mode(cpu) {
+        crate::exception::privilege_violation()
+    } else {
+        &USP_PLAN
+    }
+}
+
+/// Hook dispatcher of `MOVE An,USP` (`to_usp` = true) and `MOVE USP,An`.
+pub fn usp_hook(to_usp: bool, k: u8, cpu: &mut Cpu) {
+    let reg = (cpu.lat.ird & 7) as u8;
+    if k == HK_USP {
+        if to_usp {
+            cpu.regs.usp = cpu.regs.an(reg);
+        } else {
+            let u = cpu.regs.usp;
+            cpu.regs.set_an(reg, u);
+        }
+    } else if crate::exception::is_hook(k) {
+        crate::exception::hook(k, cpu);
+    }
+}
+
+const fn build_tas(f: usize) -> Entry {
+    let mut e = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    if f == 0 {
+        e = push(e, Tok::H(HK_TAS));
+        return push(e, Tok::Pf);
+    }
+    e = push_all(e, ea_read_plan(imm_ea(f), Size::Byte));
+    if let Tok::Rb(a) = e.toks[e.n - 1] {
+        e.toks[e.n - 1] = Tok::Tas(a);
+    }
+    e = push(e, Tok::H(HK_TAS));
+    e = push(e, Tok::N(2));
+    e = push(e, Tok::Wb(AddrSrc::Ea));
+    push(e, Tok::Pf)
+}
+
+const fn build_tas_plans() -> [Entry; IMM_FORMS] {
+    let empty = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    let mut out = [empty; IMM_FORMS];
+    let mut f = 0;
+    while f < IMM_FORMS {
+        out[f] = build_tas(f);
+        f += 1;
+    }
+    out
+}
+
+static TAS_PLANS: [Entry; IMM_FORMS] = build_tas_plans();
+
+/// Plan of `TAS`.
+pub fn tas_plan(cpu: &Cpu) -> Plan {
+    let e = &TAS_PLANS[imm_form(cpu.lat.ird)];
+    &e.toks[..e.n]
+}
+
+/// Hook dispatcher of `TAS`.
+pub fn tas_hook(k: u8, cpu: &mut Cpu) {
+    let ird = cpu.lat.ird;
+    if k == HK_TAS {
+        let reg = (ird & 7) as usize;
+        let reg_dst = (ird >> 3) & 7 == 0;
+        let x = if reg_dst {
+            cpu.regs.d[reg] & 0xFF
+        } else {
+            cpu.lat.val & 0xFF
+        };
+        cpu.regs.sr &= !(N | Z | V | C);
+        cpu.regs.sr |= nz_flags(Size::Byte, x);
+        let r = x | 0x80;
+        if reg_dst {
+            set_dn(cpu, reg, Size::Byte, r);
+        } else {
+            cpu.lat.val = r;
+        }
+    } else {
+        crate::ea::run_ea_hook(cpu, k, (ird & 7) as u8, Size::Byte);
+    }
+}
+
+/// Decoding rules of an instruction `base | ea` on the data addressing modes: the 8 data-alterable
+/// forms (`N` = 8) or, with `N` = 11, also the PC-relative and immediate sources.
+pub const fn mode_rules<const N: usize>(base: u16, id: InsnId) -> [Rule; N] {
+    let mut out = [Rule {
+        mask: 0,
+        value: 0,
+        id: InsnId::ILLEGAL,
+        variant: 0,
+    }; N];
+    let mut k = 0;
+    let mut f = 0;
+    while f < SRC_FORMS {
+        if f != 1 && (f <= 8 || N == 11) {
+            let (m, v) = bit_mode(f);
+            out[k] = Rule {
+                mask: 0xFFC0 | m,
+                value: base | v,
+                id,
+                variant: 0,
+            };
+            k += 1;
+        }
+        f += 1;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
