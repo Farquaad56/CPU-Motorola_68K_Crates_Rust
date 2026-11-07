@@ -12,4 +12,7 @@ description = "puce-m68k compiled to WebAssembly (serverless browser demo)"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-puce-m68k = { path = "../puce-m68k" }
+puce-m68k = { path = "../puce-m68k", features = ["inspect", "disasm", "std"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
