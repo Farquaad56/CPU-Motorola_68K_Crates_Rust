@@ -24,6 +24,8 @@ pub(crate) struct Latch {
     pub(crate) aux: u32,
     /// Second scratch word (ADDX/SUBX: low half of a long read low-word first).
     pub(crate) aux2: u32,
+    /// Length in clocks of the next `Tok::Nv` internal cycle.
+    pub(crate) idle: u8,
 }
 
 /// What the engine does at its next clock.
@@ -159,7 +161,7 @@ impl Engine {
         self.skip_hooks();
         // Consecutive internal cycles merge into one idle event.
         #[cfg(feature = "inspect")]
-        if self.idle_acc > 0 && !matches!(self.plan.get(self.idx), Some(Tok::N(_))) {
+        if self.idle_acc > 0 && !matches!(self.plan.get(self.idx), Some(Tok::N(_) | Tok::Nv)) {
             self.journal.push(BusEvent {
                 clocks: self.idle_acc,
                 ..BusEvent::default()
@@ -179,6 +181,18 @@ impl Engine {
                 return Some(Cur {
                     kind: None,
                     len: n,
+                    addr: self.last_addr,
+                    fc: fc_data,
+                    uds: false,
+                    lds: false,
+                    tas: false,
+                    clock: self.clk,
+                });
+            }
+            Tok::Nv => {
+                return Some(Cur {
+                    kind: None,
+                    len: lat.idle,
                     addr: self.last_addr,
                     fc: fc_data,
                     uds: false,

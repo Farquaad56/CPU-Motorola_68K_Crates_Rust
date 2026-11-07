@@ -32,6 +32,9 @@ pub enum AddrSrc {
 pub enum Tok {
     /// Internal cycle of `n` clocks (n even), no bus activity.
     N(u8),
+    /// Internal cycle whose length (clocks, even) was set by a hook in `Latch::idle` (MULU, MULS,
+    /// DIVU, DIVS). Counts as 0 in the static duration of a plan.
+    Nv,
     /// Prefetch: read the word at PC, IRC -> IR, word -> IRC, PC += 2.
     Pf,
     /// Byte read.
@@ -60,6 +63,7 @@ impl Tok {
     pub const fn clocks(self) -> u32 {
         match self {
             Tok::N(n) => n as u32,
+            Tok::Nv => 0,
             Tok::Pf | Tok::Rb(_) | Tok::Rw(_) | Tok::Wb(_) | Tok::Ww(_) | Tok::Tas(_) => 4,
             Tok::Rl(_) | Tok::Wl(_) => 8,
             Tok::H(_) => 0,
