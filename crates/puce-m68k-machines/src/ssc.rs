@@ -355,7 +355,16 @@ pub fn run_test(cpu: &mut Cpu, ram: &mut FlatRam, t: &Test) -> Outcome {
         prefetch: [s.prefetch[0] as u16, s.prefetch[1] as u16],
     });
     cpu.clear_journal();
-    cpu.step_clocks(ram, t.length);
+    // Whole instructions: Cpu::step decodes IR and returns the clocks used (0 = illegal opcode,
+    // nothing runs). A test of length 0 runs nothing.
+    let mut clocks = 0u32;
+    while clocks < t.length {
+        let n = cpu.step(ram);
+        if n == 0 {
+            break;
+        }
+        clocks += n;
+    }
 
     let fail = |what: String| Outcome::Fail(format!("{}: {what}", t.name));
     if let Err(e) = compare_state(&cpu.state(), &t.final_) {
@@ -368,6 +377,9 @@ pub fn run_test(cpu: &mut Cpu, ram: &mut FlatRam, t: &Test) -> Outcome {
                 "ram[{addr:#08x}]: expected {word:#06x}, got {got:#06x}"
             ));
         }
+    }
+    if clocks != t.length {
+        return fail(format!("clocks: expected {}, got {clocks}", t.length));
     }
     if cpu.journal_overflow() > 0 {
         return fail(format!(
