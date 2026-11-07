@@ -15,3 +15,4 @@ path = "src/main.rs"
 [dependencies]
 puce-m68k = { path = "../puce-m68k", features = ["inspect", "disasm", "std"] }
 puce-m68k-machines = { path = "../puce-m68k-machines" }
+tiny_http = "0.12"
