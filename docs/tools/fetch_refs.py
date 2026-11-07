@@ -15,7 +15,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCS = [
-    ("docs/ref/Yacht.txt", "http://nemesis.hacking-cult.org/MegaDrive/Documentation/Yacht.txt", 10000),
+    # primary mirror first, then the Wayback Machine copy (raw file, "id_" flag) when it is down (502)
+    ("docs/ref/Yacht.txt",
+     ("http://nemesis.hacking-cult.org/MegaDrive/Documentation/Yacht.txt",
+      "https://web.archive.org/web/2020id_/http://nemesis.hacking-cult.org/MegaDrive/Documentation/Yacht.txt"),
+     10000),
     ("docs/ref/M68000UM_Rev8.pdf",
      "https://cdn.hackaday.io/files/1805367724052224/M68000UM_AD_M68000_Microprocessor_Users_Manual_Rev8_1993.pdf", 100000),
     ("docs/ref/M68000PM.pdf", "https://www.eecg.utoronto.ca/~moshovos/ECE243-07/M68000PM.pdf", 100000),
@@ -28,19 +32,21 @@ def get(url, dest, min_size, force):
     if dest.exists() and dest.stat().st_size >= min_size and not force:
         print("keep   %s" % dest.relative_to(ROOT))
         return True
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "puce-m68k-fetch"})
-        with urllib.request.urlopen(req, timeout=120) as r:
-            data = r.read()
-    except Exception as e:  # noqa
-        print("FAIL   %s (%s)" % (url, e))
-        return False
-    if len(data) < min_size:
-        print("FAIL   %s (only %d bytes)" % (url, len(data)))
-        return False
-    dest.write_bytes(data)
-    print("ok     %s (%d bytes)" % (dest.relative_to(ROOT), len(data)))
-    return True
+    for u in (url if isinstance(url, tuple) else (url,)):
+        try:
+            req = urllib.request.Request(u, headers={"User-Agent": "puce-m68k-fetch"})
+            with urllib.request.urlopen(req, timeout=120) as r:
+                data = r.read()
+        except Exception as e:  # noqa
+            print("FAIL   %s (%s)" % (u, e))
+            continue
+        if len(data) < min_size:
+            print("FAIL   %s (only %d bytes)" % (u, len(data)))
+            continue
+        dest.write_bytes(data)
+        print("ok     %s (%d bytes)" % (dest.relative_to(ROOT), len(data)))
+        return True
+    return False
 
 
 def main():
