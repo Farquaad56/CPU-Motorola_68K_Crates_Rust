@@ -1,22 +1,63 @@
 //! Instruction modules.
 //!
-//! Every instruction card adds a submodule exposing `pub const RULES: &[Rule]`; the
-//! global list below is their concatenation (add `..` entries through a const
-//! concatenation helper when the first instruction module is created).
-//! The same cards add their arm to [`plan_for`] (plan of an instruction) and to
-//! [`run_hook`] (semantics of the hooks `H(k)` of their plans).
+//! Every instruction card adds a submodule `i_xxx` exposing `ID`, `RULES`, `plan` and `hook`, then:
+//! 1. declares it below (`pub mod i_xxx;`),
+//! 2. adds its `RULES` to `GROUPS` (both the normal and the test list),
+//! 3. adds one arm to [`plan_for`] and one to [`run_hook`].
+//!
+//! The global rule list is the const concatenation of the groups (`concat`); two rules that
+//! capture the same opcode make the build fail (see `decode::build_table`).
 
 use crate::cpu::Cpu;
 use crate::decode::{InsnId, Rule};
 use crate::engine::plan::Plan;
 
-/// All decoding rules of the core (empty until the first instruction card).
-#[cfg(not(test))]
-pub const RULES: &[Rule] = &[];
+pub mod i_nop;
 
-/// Decoding rules of the unit tests: the test instructions of [`testing`].
+/// Rule groups of the instruction modules.
+#[cfg(not(test))]
+const GROUPS: &[&[Rule]] = &[i_nop::RULES];
+
+/// Rule groups in unit tests: the instructions plus the test instructions of [`testing`].
 #[cfg(test)]
-pub const RULES: &[Rule] = testing::RULES;
+const GROUPS: &[&[Rule]] = &[i_nop::RULES, testing::RULES];
+
+const fn total(groups: &[&[Rule]]) -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < groups.len() {
+        n += groups[i].len();
+        i += 1;
+    }
+    n
+}
+
+const fn concat<const N: usize>(groups: &[&[Rule]]) -> [Rule; N] {
+    let mut out = [Rule {
+        mask: 0,
+        value: 0,
+        id: InsnId::ILLEGAL,
+        variant: 0,
+    }; N];
+    let mut k = 0;
+    let mut i = 0;
+    while i < groups.len() {
+        let mut j = 0;
+        while j < groups[i].len() {
+            out[k] = groups[i][j];
+            k += 1;
+            j += 1;
+        }
+        i += 1;
+    }
+    out
+}
+
+const LEN: usize = total(GROUPS);
+static ALL: [Rule; LEN] = concat::<LEN>(GROUPS);
+
+/// All decoding rules of the core.
+pub static RULES: &[Rule] = &ALL;
 
 /// Plan of the instruction `(id, variant)` that has just been decoded.
 ///
@@ -25,6 +66,7 @@ pub const RULES: &[Rule] = testing::RULES;
 #[allow(unused_variables)]
 pub(crate) fn plan_for(id: InsnId, variant: u8, cpu: &mut Cpu) -> Plan {
     match id {
+        i_nop::ID => i_nop::plan(variant),
         #[cfg(test)]
         testing::ID => testing::plan(variant),
         _ => &[],
@@ -35,6 +77,7 @@ pub(crate) fn plan_for(id: InsnId, variant: u8, cpu: &mut Cpu) -> Plan {
 #[allow(unused_variables)]
 pub(crate) fn run_hook(id: InsnId, k: u8, cpu: &mut Cpu) {
     match id {
+        i_nop::ID => i_nop::hook(k, cpu),
         #[cfg(test)]
         testing::ID => testing::hook(k, cpu),
         _ => {}
