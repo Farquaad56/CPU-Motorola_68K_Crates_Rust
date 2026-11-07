@@ -135,6 +135,65 @@ pub fn run(rom: &Path, max_instr: u64, org: Option<&str>) -> Result<(), String> 
     Ok(())
 }
 
+/// Image of the bench loop: `moveq #1,d2`, then `move.l d0,d1 ; add.l d2,d0 ; bne.s loop`
+/// (22 clocks per turn); SSP 0x1000, PC 0x100.
+pub fn bench_image() -> Vec<u8> {
+    let mut v = vec![0u8; 0x100];
+    v[2] = 0x10;
+    v[6] = 0x01;
+    for w in [0x7401u16, 0x2200, 0xD082, 0x66FA] {
+        v.extend_from_slice(&w.to_be_bytes());
+    }
+    v
+}
+
+/// Result of `m68k bench`.
+pub struct BenchReport {
+    /// Clocks executed.
+    pub clocks: u64,
+    /// Instructions executed.
+    pub instructions: u64,
+    /// Wall-clock seconds.
+    pub seconds: f64,
+}
+
+impl BenchReport {
+    /// Equivalent frequency: 68000 clocks executed per second, in MHz.
+    pub fn mhz(&self) -> f64 {
+        self.clocks as f64 / self.seconds.max(1e-9) / 1e6
+    }
+}
+
+/// Runs the bench loop for about `clocks` clocks (a whole number of turns).
+pub fn bench(clocks: u64) -> BenchReport {
+    let turns = clocks.div_ceil(22).max(1);
+    let image = bench_image();
+    let t0 = std::time::Instant::now();
+    let r = run_image(&image, 1 + 3 * turns, None);
+    BenchReport {
+        clocks: r.clocks,
+        instructions: r.instructions,
+        seconds: t0.elapsed().as_secs_f64(),
+    }
+}
+
+/// Text printed by `m68k bench`.
+pub fn format_bench(r: &BenchReport) -> String {
+    format!(
+        "bench: {} clocks, {} instructions in {:.3} s = {:.2} MHz equivalent\n",
+        r.clocks,
+        r.instructions,
+        r.seconds,
+        r.mhz()
+    )
+}
+
+/// `m68k bench [--clocks N]`
+pub fn bench_cmd(clocks: u64) -> Result<(), String> {
+    print!("{}", format_bench(&bench(clocks)));
+    Ok(())
+}
+
 /// Arguments of `m68k ssc`.
 pub struct SscArgs<'a> {
     /// Directory of `*.json.bin` files.
@@ -360,5 +419,26 @@ mod tests {
         assert_eq!(exit_code(&[s("ADD.b", 1), s("TAS", 5)], &known, true), 1);
         assert_eq!(exit_code(&[s("ADD.b", 0), s("TAS", 5)], &known, true), 0);
         assert_eq!(exit_code(&[s("ADD.b", 9)], &known, false), 0);
+    }
+
+    #[test]
+    fn e15_01_bench_report() {
+        let r = bench(1000);
+        assert!(r.clocks >= 1000 && r.clocks < 1000 + 22, "{}", r.clocks);
+        assert_eq!(r.instructions % 3, 1);
+        assert!(r.mhz() > 0.0);
+        let t = format_bench(&r);
+        assert!(
+            t.starts_with("bench: ") && t.contains("MHz equivalent"),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn e15_01_bench_image_runs() {
+        let r = run_image(&bench_image(), 3000, None);
+        assert!(!r.stopped);
+        assert_eq!(r.state.d[2], 1);
+        assert!(r.state.d[0] > 900, "{}", r.state.d[0]);
     }
 }

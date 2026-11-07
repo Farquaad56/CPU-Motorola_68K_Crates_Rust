@@ -60,6 +60,12 @@ pub enum Cmd {
         #[arg(long)]
         count: Option<usize>,
     },
+    /// Measure the speed of the core (MOVE/ADD/Bcc loop) in MHz equivalent.
+    Bench {
+        /// Clocks to execute.
+        #[arg(long, default_value_t = 50_000_000)]
+        clocks: u64,
+    },
     /// Download the reference documents and test suites.
     Fetch {
         /// Only download `docs` or `tests`.
@@ -92,6 +98,7 @@ fn main() {
             known: known.as_deref(),
         }),
         Cmd::Disasm { file, org, count } => commands::disasm(file, org, *count).map(|()| 0),
+        Cmd::Bench { clocks } => commands::bench_cmd(*clocks).map(|()| 0),
         Cmd::Fetch { only } => commands::fetch(only.as_deref()),
     };
     match res {
@@ -210,5 +217,14 @@ mod tests {
     #[test]
     fn e03_07_bad_flag() {
         assert!(Cli::try_parse_from(["m68k", "ssc", "d", "--bogus"]).is_err());
+    }
+
+    #[test]
+    fn e15_01_parse_bench() {
+        let c = Cli::try_parse_from(["m68k", "bench"]).unwrap();
+        assert!(matches!(c.command, Cmd::Bench { clocks: 50_000_000 }));
+        let c = Cli::try_parse_from(["m68k", "bench", "--clocks", "1000"]).unwrap();
+        assert!(matches!(c.command, Cmd::Bench { clocks: 1000 }));
+        assert!(Cli::try_parse_from(["m68k", "bench", "--clocks", "x"]).is_err());
     }
 }
