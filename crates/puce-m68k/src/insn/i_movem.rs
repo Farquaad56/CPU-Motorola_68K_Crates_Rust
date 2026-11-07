@@ -434,4 +434,55 @@ mod tests {
         assert_eq!(r.writes, std::vec![(0x2FE, 0x0300), (0x2FC, 0x0001)]);
         assert_eq!(cpu.regs.usp, 0x2FC);
     }
+
+    #[test]
+    fn e06_05b_decode_legal() {
+        // M->R: modes (An), (An)+, d16, d8 (8 registers each) + absW, absL, d16(PC), d8(PC)
+        let mr = 4 * 8 + 4;
+        assert_eq!(
+            TABLE
+                .iter()
+                .filter(|d| d.id == ID && d.variant >= 2)
+                .count(),
+            2 * mr
+        );
+        assert_eq!(decode(0x4C98).variant, 2); // (A0)+
+        assert_eq!(decode(0x4CFA).variant, 3); // d16(PC), long
+    }
+
+    #[test]
+    fn e06_05b_decode_illegal() {
+        for op in [0x4C80u16, 0x4CA0, 0x4CBC, 0x4CC0] {
+            assert_ne!(decode(op).id, ID, "{op:#06x}");
+        }
+    }
+
+    #[test]
+    fn e06_05b_plan_basic() {
+        let mut cpu = Cpu::new();
+        cpu.lat.ird = 0x4C90;
+        cpu.regs.irc = 0x0003;
+        assert_eq!(plan_clocks(plan(2, &cpu)), 12 + 4 * 2);
+        cpu.lat.ird = 0x4C98; // (An)+
+        assert_eq!(plan_clocks(plan(2, &cpu)), 12 + 4 * 2);
+    }
+
+    #[test]
+    fn e06_05b_flags_sample() {
+        // word sign-extended into the whole register, SR untouched
+        let mut r = ram();
+        r.w[0x100] = 0x8000;
+        r.w[0x101] = 0x7FFF;
+        let st = CpuState {
+            a: [0x200, 0, 0, 0, 0, 0, 0],
+            sr: 0x2715,
+            pc: 0x20,
+            ..CpuState::default()
+        };
+        let (cpu, n) = run(0x4C90, 0x0003, st, &mut r); // MOVEM.w (A0),D0-D1
+        assert_eq!(n, 20);
+        assert_eq!(cpu.regs.d[0], 0xFFFF_8000);
+        assert_eq!(cpu.regs.d[1], 0x0000_7FFF);
+        assert_eq!(cpu.regs.sr, 0x2715);
+    }
 }
