@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Motorola 68000 Emulator</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' };</script>
+<style>
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .cell { padding: 0 .35rem; }
+  .cur { background: rgba(30, 64, 175, .55); }
+  .flag-on { background: #166534; color: #fff; }
+  .flag-off { background: #374151; color: #9ca3af; }
+</style>
+</head>
+<body class="bg-gray-900 text-gray-100 text-xs">
+<header class="flex flex-wrap items-center gap-3 p-2 bg-gray-800 border-b border-gray-700">
+  <h1 class="text-base font-bold">Motorola 68000 Emulator</h1>
+  <span id="conn" class="px-2 rounded bg-red-800" data-i18n="loading">loading</span>
+  <span class="text-gray-400" data-i18n="serverless">WebAssembly demo, no server</span>
+  <span class="flex-1"></span>
+  <button id="lang" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">FR / EN</button>
+</header>
+
+<main class="p-2 grid gap-2 grid-cols-1 lg:grid-cols-3">
+  <section class="bg-gray-800 rounded p-2 lg:col-span-3">
+    <h2 class="font-bold mb-1" data-i18n="controls">Controls</h2>
+    <div class="flex flex-wrap items-center gap-2">
+      <button id="b-run" class="px-2 py-1 rounded bg-green-700 hover:bg-green-600" data-i18n="run">Run</button>
+      <button id="b-pause" class="px-2 py-1 rounded bg-yellow-700 hover:bg-yellow-600" data-i18n="pause">Pause</button>
+      <button id="b-step" class="px-2 py-1 rounded bg-blue-700 hover:bg-blue-600" data-i18n="step">Step</button>
+      <button id="b-clock" class="px-2 py-1 rounded bg-blue-700 hover:bg-blue-600" data-i18n="step_clock">Clock step</button>
+      <button id="b-reset" class="px-2 py-1 rounded bg-red-700 hover:bg-red-600" data-i18n="reset">Reset</button>
+      <label class="flex items-center gap-1"><span data-i18n="per_frame">Instructions per frame</span>
+        <select id="speed" class="bg-gray-700 rounded px-1">
+          <option value="1">1</option><option value="10">10</option><option value="100" selected>100</option>
+          <option value="1000">1000</option><option value="10000">10000</option>
+        </select></label>
+      <span class="flex-1"></span>
+      <span><span data-i18n="status">Status</span>: <b id="st-status">-</b></span>
+      <span><span data-i18n="instrs">Instr.</span>: <b id="st-instrs">0</b></span>
+      <span><span data-i18n="clocks">Clocks</span>: <b id="st-clocks">0</b></span>
+    </div>
+    <div class="flex flex-wrap items-center gap-2 mt-2">
+      <label class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 cursor-pointer"><span data-i18n="upload">Load a .bin</span>
+        <input id="file" type="file" class="hidden"></label>
+      <div id="drop" class="flex-1 min-w-[12rem] border border-dashed border-gray-500 rounded px-2 py-1 text-center text-gray-400" data-i18n="drop">Drop a .bin file here</div>
+      <label class="flex items-center gap-1"><span data-i18n="ram">RAM</span>
+        <select id="ram" class="bg-gray-700 rounded px-1"><option value="1">1 MiB</option><option value="16">16 MiB</option></select></label>
+    </div>
+  </section>
+
+  <section class="bg-gray-800 rounded p-2">
+    <h2 class="font-bold mb-1" data-i18n="registers">Registers</h2>
+    <div id="regs" class="grid grid-cols-2 gap-x-3"></div>
+    <div class="mt-1">SR <b id="r-sr"></b> <span id="flags" class="inline-flex gap-1"></span> IPL <b id="r-imask"></b></div>
+    <div class="mt-1">USP <b id="r-usp"></b> SSP <b id="r-ssp"></b></div>
+    <div class="mt-1">PC <b id="r-pc"></b> IR <b id="r-ir"></b> IRC <b id="r-irc"></b></div>
+  </section>
+
+  <section class="bg-gray-800 rounded p-2 lg:col-span-2">
+    <h2 class="font-bold mb-1" data-i18n="disasm">Disassembly</h2>
+    <table class="w-full"><tbody id="dis"></tbody></table>
+  </section>
+
+  <section class="bg-gray-800 rounded p-2 lg:col-span-2">
+    <h2 class="font-bold mb-1" data-i18n="memory">Memory</h2>
+    <div class="flex flex-wrap items-center gap-2 mb-1">
+      <label class="flex items-center gap-1"><input id="follow" type="checkbox" checked><span data-i18n="follow_pc">Follow PC</span></label>
+      <input id="mem-base" class="w-24 bg-gray-700 rounded px-1" placeholder="$000000">
+      <button id="b-mem" class="px-2 rounded bg-gray-700 hover:bg-gray-600" data-i18n="go">Go</button>
+    </div>
+    <pre id="mem" class="leading-4"></pre>
+  </section>
+
+  <section class="bg-gray-800 rounded p-2">
+    <h2 class="font-bold mb-1" data-i18n="buslog">Bus cycles</h2>
+    <table class="w-full">
+      <thead><tr class="text-gray-400 text-left">
+        <th class="cell">kind</th><th class="cell">addr</th><th class="cell">data</th>
+        <th class="cell">fc</th><th class="cell">uds</th><th class="cell">lds</th><th class="cell">clk</th></tr></thead>
+      <tbody id="buslog"></tbody>
+    </table>
+  </section>
+</main>
+
+<div id="err" class="fixed bottom-2 right-2 max-w-md bg-red-900 text-red-100 rounded px-3 py-2 hidden"></div>
+
+<script type="module">
+// Build: see README.md (wasm-bindgen --target web --out-dir demo/pkg).
+// Everything shown comes from the wasm module: this page does not compute anything about the CPU.
+import init, { Machine } from './pkg/puce_m68k_wasm.js';
+
+const I18N = {
+  fr: {
+    loading: "chargement",
+    ready: "pr\u00eat",
+    serverless: "D\u00e9mo WebAssembly, sans serveur",
+    controls: "Commandes",
+    run: "Lancer",
+    pause: "Pause",
+    step: "Pas",
+    step_clock: "Pas d'horloge",
+    reset: "R\u00e9initialiser",
+    per_frame: "Instructions par image",
+    status: "\u00c9tat",
+    instrs: "Instr.",
+    clocks: "Horloges",
+    upload: "Charger un .bin",
+    drop: "D\u00e9posez un fichier .bin ici",
+    ram: "RAM",
+    registers: "Registres",
+    disasm: "D\u00e9sassembleur",
+    memory: "M\u00e9moire",
+    follow_pc: "Suivre le PC",
+    go: "Aller",
+    buslog: "Cycles de bus",
+    idle: "arr\u00eat\u00e9",
+    running: "en cours",
+    halted: "stopp\u00e9",
+    error: "Erreur"
+  },
+  en: {
+    loading: "loading",
+    ready: "ready",
+    serverless: "WebAssembly demo, no server",
+    controls: "Controls",
+    run: "Run",
+    pause: "Pause",
+    step: "Step",
+    step_clock: "Clock step",
+    reset: "Reset",
+    per_frame: "Instructions per frame",
+    status: "Status",
+    instrs: "Instr.",
+    clocks: "Clocks",
+    upload: "Load a .bin",
+    drop: "Drop a .bin file here",
+    ram: "RAM",
+    registers: "Registers",
+    disasm: "Disassembly",
+    memory: "Memory",
+    follow_pc: "Follow PC",
+    go: "Go",
+    buslog: "Bus cycles",
+    idle: "stopped",
+    running: "running",
+    halted: "halted",
+    error: "Error"
+  }
+};
+const $ = (id) => document.getElementById(id);
+let lang = 'en';
+try { lang = localStorage.getItem('lang') || (navigator.language || 'en').slice(0, 2); } catch (e) { /* no storage */ }
+if (!I18N[lang]) lang = 'en';
+const t = (k) => (I18N[lang] && I18N[lang][k]) || k;
+let status = 'idle';
+let ready = false;
+
+function applyLang() {
+  document.documentElement.lang = lang;
+  document.querySelectorAll('[data-i18n]').forEach((el) => { el.textContent = t(el.getAttribute('data-i18n')); });
+  $('conn').textContent = t(ready ? 'ready' : 'loading');
+  $('st-status').textContent = t(status);
+  try { localStorage.setItem('lang', lang); } catch (e) { /* no storage */ }
+}
+$('lang').onclick = () => { lang = lang === 'fr' ? 'en' : 'fr'; applyLang(); };
+
+const hx = (v, n) => '$' + Number(v).toString(16).toUpperCase().padStart(n, '0');
+const clear = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
+function td(text, cls) { const c = document.createElement('td'); c.className = 'cell ' + (cls || ''); c.textContent = text; return c; }
+function tr(cells, cls) { const r = document.createElement('tr'); if (cls) r.className = cls; cells.forEach((c) => r.appendChild(c)); return r; }
+function showError(msg) {
+  const e = $('err');
+  e.textContent = t('error') + ': ' + msg;
+  e.classList.remove('hidden');
+  setTimeout(() => e.classList.add('hidden'), 6000);
+}
+
+let m = null;
+let memBase = 0;
+let timer = 0;
+
+function render() {
+  const r = JSON.parse(m.regs_json());
+  $('st-status').textContent = t(status);
+  $('st-instrs').textContent = r.instrs;
+  $('st-clocks').textContent = r.clocks;
+  const box = $('regs');
+  clear(box);
+  for (let i = 0; i < 8; i++) {
+    const d = document.createElement('div');
+    d.textContent = 'D' + i + ' ' + hx(r.d[i], 8);
+    box.appendChild(d);
+    const a = document.createElement('div');
+    a.textContent = (i === 7 ? 'SP' : 'A' + i) + ' ' + hx(r.a[i], 8);
+    box.appendChild(a);
+  }
+  $('r-sr').textContent = hx(r.sr, 4);
+  $('r-imask').textContent = r.imask;
+  $('r-usp').textContent = hx(r.usp, 8);
+  $('r-ssp').textContent = hx(r.ssp, 8);
+  $('r-pc').textContent = hx(r.pc, 6);
+  $('r-ir').textContent = hx(r.ir, 4);
+  $('r-irc').textContent = hx(r.irc, 4);
+  const fl = $('flags');
+  clear(fl);
+  [['X', r.x], ['N', r.n], ['Z', r.z], ['V', r.v], ['C', r.c], ['S', r.s], ['T', r.t]].forEach(([n, v]) => {
+    const f = document.createElement('span');
+    f.className = 'px-1 rounded ' + (v ? 'flag-on' : 'flag-off');
+    f.textContent = n;
+    fl.appendChild(f);
+  });
+  const body = $('dis');
+  clear(body);
+  JSON.parse(m.disasm(r.pc, 24)).forEach((row, i) => {
+    const words = (row.words || []).map((w) => hx(w, 4).slice(1)).join(' ');
+    body.appendChild(tr([td(hx(row.addr, 6)), td(words, 'text-gray-400'), td(row.text)], i === 0 ? 'cur' : ''));
+  });
+  if ($('follow').checked) memBase = r.pc - (r.pc % 16);
+  const hex = m.mem_hex(memBase);
+  const pre = $('mem');
+  clear(pre);
+  for (let off = 0; off < 256; off += 16) {
+    let ascii = '';
+    let line = hx(memBase + off, 6) + '  ';
+    for (let i = 0; i < 16; i++) {
+      const v = parseInt(hex.substr((off + i) * 2, 2), 16);
+      line += hex.substr((off + i) * 2, 2).toUpperCase() + ' ';
+      ascii += v >= 32 && v < 127 ? String.fromCharCode(v) : '.';
+    }
+    const div = document.createElement('div');
+    div.textContent = line + ' ' + ascii;
+    pre.appendChild(div);
+  }
+  const bl = $('buslog');
+  clear(bl);
+  JSON.parse(m.buslog_json()).forEach((e) => bl.appendChild(tr([
+    td(e.kind), td(hx(e.addr, 6)), td(hx(e.data, 4)), td(e.fc), td(e.uds), td(e.lds), td(e.clocks)
+  ])));
+}
+
+function stop(next) {
+  status = next;
+  if (timer) { cancelAnimationFrame(timer); timer = 0; }
+}
+
+function frame() {
+  const n = Number($('speed').value) || 1;
+  for (let i = 0; i < n; i++) {
+    if (m.step() === 0) { stop('halted'); break; }
+  }
+  render();
+  if (status === 'running') timer = requestAnimationFrame(frame);
+}
+
+function newMachine(bytes) {
+  stop('idle');
+  if (m) m.free();
+  m = new Machine(Number($('ram').value));
+  if (bytes) {
+    try { m.load(bytes); } catch (e) { showError(String(e)); }
+  }
+  render();
+}
+
+function loadFile(file) {
+  const rd = new FileReader();
+  rd.onload = () => { lastImage = new Uint8Array(rd.result); newMachine(lastImage); };
+  rd.readAsArrayBuffer(file);
+}
+
+let lastImage = null;
+await init();
+ready = true;
+newMachine(null);
+applyLang();
+$('b-run').onclick = () => { if (status !== 'running') { status = 'running'; timer = requestAnimationFrame(frame); } };
+$('b-pause').onclick = () => { stop('idle'); render(); };
+$('b-step').onclick = () => { stop('idle'); if (m.step() === 0) status = 'halted'; render(); };
+$('b-clock').onclick = () => { stop('idle'); if (m.step_clock() < 0) status = 'halted'; render(); };
+$('b-reset').onclick = () => { stop('idle'); m.reset(); render(); };
+$('ram').onchange = () => newMachine(lastImage);
+$('file').onchange = (ev) => { if (ev.target.files[0]) loadFile(ev.target.files[0]); };
+const drop = $('drop');
+drop.ondragover = (ev) => { ev.preventDefault(); };
+drop.ondrop = (ev) => { ev.preventDefault(); if (ev.dataTransfer.files[0]) loadFile(ev.dataTransfer.files[0]); };
+$('b-mem').onclick = () => {
+  $('follow').checked = false;
+  const v = $('mem-base').value.trim().replace('$', '');
+  memBase = parseInt(v || '0', 16) || 0;
+  render();
+};
+$('follow').onchange = render;
+</script>
+</body>
+</html>
