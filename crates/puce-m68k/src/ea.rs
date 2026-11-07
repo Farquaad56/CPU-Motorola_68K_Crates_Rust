@@ -4,6 +4,8 @@
 //! (data, memory, control, alterable) say which modes an instruction accepts; they
 //! are used to write its decoding rules. Modes 7/5..7/7 do not exist.
 
+use crate::engine::plan::{AddrSrc, Plan, Tok};
+
 /// The 12 addressing modes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Ea {
@@ -154,9 +156,124 @@ pub fn ea_mask(f: fn(u8, u8) -> bool) -> u64 {
     m
 }
 
+/// Address source of every operand access (the hooks leave the address in ea).
+const A: AddrSrc = AddrSrc::Ea;
+
+/// Operand size.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Size {
+    /// 8 bits.
+    Byte,
+    /// 16 bits.
+    Word,
+    /// 32 bits.
+    Long,
+}
+
+/// Hook: `ea = An` (register number taken from the instruction by the executor).
+pub const HK_EA_AN: u8 = 0x01;
+/// Hook: `An -= size` (2 for a byte access on A7), then `ea = An`.
+pub const HK_AN_PREDEC: u8 = 0x02;
+/// Hook: `An += size` after the access (2 for a byte access on A7).
+pub const HK_AN_POSTINC: u8 = 0x03;
+
+/// Micro-cycle plan that fetches an operand at `ea` (simple modes only).
+///
+/// The plans do not depend on the register number: the hooks (executed by the semantic layer,
+/// E05-05) read it from the instruction. Timing from `docs/specs/instr/_EA.md`: `Dn`/`An` take no
+/// clock, `(An)` and `(An)+` one bus cycle (two for a long), `-(An)` adds an internal cycle of 2
+/// clocks before the read. The A7 byte rule (step 2 instead of 1) lives in the hooks, not here.
+/// Modes not covered yet (E05-04b) return an empty plan.
+pub fn ea_read_plan(ea: Ea, size: Size) -> Plan {
+    use Tok::*;
+    match (ea, size) {
+        (Ea::Ind(_), Size::Byte) => &[H(HK_EA_AN), Rb(A)],
+        (Ea::Ind(_), Size::Word) => &[H(HK_EA_AN), Rw(A)],
+        (Ea::Ind(_), Size::Long) => &[H(HK_EA_AN), Rl(A)],
+        (Ea::PostInc(_), Size::Byte) => &[H(HK_EA_AN), Rb(A), H(HK_AN_POSTINC)],
+        (Ea::PostInc(_), Size::Word) => &[H(HK_EA_AN), Rw(A), H(HK_AN_POSTINC)],
+        (Ea::PostInc(_), Size::Long) => &[H(HK_EA_AN), Rl(A), H(HK_AN_POSTINC)],
+        (Ea::PreDec(_), Size::Byte) => &[H(HK_AN_PREDEC), N(2), Rb(A)],
+        (Ea::PreDec(_), Size::Word) => &[H(HK_AN_PREDEC), N(2), Rw(A)],
+        (Ea::PreDec(_), Size::Long) => &[H(HK_AN_PREDEC), N(2), Rl(A)],
+        _ => &[],
+    }
+}
+
+/// Micro-cycle plan that stores an operand at `ea`: same address phase as [`ea_read_plan`],
+/// with a write token (`Wb`/`Ww`/`Wl`) in place of the read.
+pub fn ea_write_plan(ea: Ea, size: Size) -> Plan {
+    use Tok::*;
+    match (ea, size) {
+        (Ea::Ind(_), Size::Byte) => &[H(HK_EA_AN), Wb(A)],
+        (Ea::Ind(_), Size::Word) => &[H(HK_EA_AN), Ww(A)],
+        (Ea::Ind(_), Size::Long) => &[H(HK_EA_AN), Wl(A)],
+        (Ea::PostInc(_), Size::Byte) => &[H(HK_EA_AN), Wb(A), H(HK_AN_POSTINC)],
+        (Ea::PostInc(_), Size::Word) => &[H(HK_EA_AN), Ww(A), H(HK_AN_POSTINC)],
+        (Ea::PostInc(_), Size::Long) => &[H(HK_EA_AN), Wl(A), H(HK_AN_POSTINC)],
+        (Ea::PreDec(_), Size::Byte) => &[H(HK_AN_PREDEC), N(2), Wb(A)],
+        (Ea::PreDec(_), Size::Word) => &[H(HK_AN_PREDEC), N(2), Ww(A)],
+        (Ea::PreDec(_), Size::Long) => &[H(HK_AN_PREDEC), N(2), Wl(A)],
+        _ => &[],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::plan::plan_clocks;
+
+    #[test]
+    fn e05_04a_dn_no_bus() {
+        for s in [Size::Byte, Size::Word, Size::Long] {
+            assert_eq!(plan_clocks(ea_read_plan(Ea::DataReg(2), s)), 0);
+            assert_eq!(plan_clocks(ea_read_plan(Ea::AddrReg(2), s)), 0);
+            assert!(ea_read_plan(Ea::DataReg(2), s).is_empty());
+        }
+    }
+
+    #[test]
+    fn e05_04a_ind_word_4() {
+        assert_eq!(plan_clocks(ea_read_plan(Ea::Ind(1), Size::Word)), 4);
+        assert_eq!(plan_clocks(ea_read_plan(Ea::Ind(1), Size::Byte)), 4);
+        assert_eq!(plan_clocks(ea_read_plan(Ea::PostInc(1), Size::Word)), 4);
+    }
+
+    #[test]
+    fn e05_04a_ind_long_8() {
+        assert_eq!(plan_clocks(ea_read_plan(Ea::Ind(1), Size::Long)), 8);
+        assert_eq!(plan_clocks(ea_read_plan(Ea::PostInc(1), Size::Long)), 8);
+    }
+
+    #[test]
+    fn e05_04a_predec_extra() {
+        // _EA.md lines 139 and 150: -(An) = 6 clocks (.B/.W), 10 clocks (.L)
+        assert_eq!(plan_clocks(ea_read_plan(Ea::PreDec(3), Size::Byte)), 6);
+        assert_eq!(plan_clocks(ea_read_plan(Ea::PreDec(3), Size::Word)), 6);
+        assert_eq!(plan_clocks(ea_read_plan(Ea::PreDec(3), Size::Long)), 10);
+        assert_eq!(plan_clocks(ea_write_plan(Ea::PreDec(3), Size::Word)), 6);
+    }
+
+    #[test]
+    fn e05_04a_write_same_as_read_bus() {
+        let w = ea_write_plan(Ea::Ind(0), Size::Word);
+        assert_eq!(w.iter().filter(|t| matches!(t, Tok::Ww(_))).count(), 1);
+        assert_eq!(w.iter().filter(|t| matches!(t, Tok::Rw(_))).count(), 0);
+        assert_eq!(
+            plan_clocks(w),
+            plan_clocks(ea_read_plan(Ea::Ind(0), Size::Word))
+        );
+        assert!(ea_write_plan(Ea::Ind(0), Size::Byte).contains(&Tok::Wb(AddrSrc::Ea)));
+        assert!(ea_write_plan(Ea::Ind(0), Size::Long).contains(&Tok::Wl(AddrSrc::Ea)));
+    }
+
+    #[test]
+    fn e05_04a_postinc_hook() {
+        assert!(ea_read_plan(Ea::PostInc(0), Size::Word).contains(&Tok::H(HK_AN_POSTINC)));
+        assert!(ea_write_plan(Ea::PostInc(0), Size::Long).contains(&Tok::H(HK_AN_POSTINC)));
+        assert!(ea_read_plan(Ea::PreDec(0), Size::Word).contains(&Tok::H(HK_AN_PREDEC)));
+        assert!(!ea_read_plan(Ea::Ind(0), Size::Word).contains(&Tok::H(HK_AN_POSTINC)));
+    }
 
     #[test]
     fn e05_02_decode_all_12() {
