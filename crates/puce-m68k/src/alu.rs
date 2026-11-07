@@ -1921,6 +1921,239 @@ pub const fn eor_rules(id: InsnId) -> [Rule; N_RULES_EOR] {
     out
 }
 
+// ---------------------------------------------------------------------------------------------
+// Shifts and rotates: ASL, ASR, LSL, LSR, ROL, ROR, ROXL, ROXR.
+// Timing: docs/specs/instr/ASL.md. Register forms: `np n* n` (`nn` when long) with m = count;
+// memory forms (word, count 1): `nr np nw`.
+// ---------------------------------------------------------------------------------------------
+
+/// Hook of the shift plans.
+pub const HK_SHIFT: u8 = 0x8F;
+
+/// Shift or rotate operation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Shift {
+    /// Arithmetic shift left.
+    Asl,
+    /// Arithmetic shift right.
+    Asr,
+    /// Logical shift left.
+    Lsl,
+    /// Logical shift right.
+    Lsr,
+    /// Rotate left.
+    Rol,
+    /// Rotate right.
+    Ror,
+    /// Rotate left through X.
+    Roxl,
+    /// Rotate right through X.
+    Roxr,
+}
+
+/// Semantics of [`HK_SHIFT`]: result, flags and the length of the variable idle cycle.
+pub fn shift_exec(op: Shift, cpu: &mut Cpu) {
+    let ird = cpu.lat.ird;
+    let mem = (ird >> 6) & 3 == 3;
+    let size = if mem { Size::Word } else { size_of_ird(ird) };
+    let reg = (ird & 7) as usize;
+    let msb = size_msb(size);
+    let mask = size_mask(size);
+    let mut x = if mem {
+        cpu.lat.val & mask
+    } else {
+        cpu.regs.d[reg] & mask
+    };
+    let count = if mem {
+        1
+    } else if ird & 0x20 != 0 {
+        cpu.regs.d[((ird >> 9) & 7) as usize] & 63
+    } else {
+        match (ird >> 9) & 7 {
+            0 => 8,
+            c => u32::from(c),
+        }
+    };
+    let mut sr = cpu.regs.sr;
+    let mut xf = sr & X != 0;
+    let mut c = false;
+    let mut v = false;
+    let mut first = true;
+    let mut i = 0;
+    while i < count {
+        first = false;
+        match op {
+            Shift::Asl | Shift::Lsl => {
+                c = x & msb != 0;
+                let n = (x << 1) & mask;
+                if op == Shift::Asl && (n & msb) != (x & msb) {
+                    v = true;
+                }
+                x = n;
+            }
+            Shift::Asr | Shift::Lsr => {
+                c = x & 1 != 0;
+                let top = if op == Shift::Asr { x & msb } else { 0 };
+                x = (x >> 1) | top;
+            }
+            Shift::Rol => {
+                c = x & msb != 0;
+                x = ((x << 1) & mask) | u32::from(c);
+            }
+            Shift::Ror => {
+                c = x & 1 != 0;
+                x = (x >> 1) | if c { msb } else { 0 };
+            }
+            Shift::Roxl => {
+                c = x & msb != 0;
+                x = ((x << 1) & mask) | u32::from(xf);
+                xf = c;
+            }
+            Shift::Roxr => {
+                c = x & 1 != 0;
+                x = (x >> 1) | if xf { msb } else { 0 };
+                xf = c;
+            }
+        }
+        i += 1;
+    }
+    if first && matches!(op, Shift::Roxl | Shift::Roxr) {
+        c = xf;
+    }
+    if !matches!(op, Shift::Rol | Shift::Ror) && count > 0 {
+        xf = c;
+    }
+    sr &= !(X | N | Z | V | C);
+    sr |= nz_flags(size, x);
+    if c {
+        sr |= C;
+    }
+    if v {
+        sr |= V;
+    }
+    if xf {
+        sr |= X;
+    }
+    cpu.regs.sr = sr;
+    if mem {
+        cpu.lat.val = x;
+    } else {
+        set_dn(cpu, reg, size, x);
+        cpu.lat.idle = (2 * count) as u8;
+    }
+}
+
+const fn build_shift_reg(long: bool) -> Entry {
+    let mut e = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    e = push(e, Tok::H(HK_SHIFT));
+    e = push(e, Tok::Pf);
+    e = push(e, Tok::N(if long { 4 } else { 2 }));
+    push(e, Tok::Nv)
+}
+
+const fn build_shift_mem(f: usize) -> Entry {
+    let mut e = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    e = push_all(e, ea_read_plan(imm_ea(f), Size::Word));
+    e = push(e, Tok::H(HK_SHIFT));
+    e = push(e, Tok::Pf);
+    push_write(e, 1)
+}
+
+const fn build_shift_mems() -> [Entry; 7] {
+    let empty = Entry {
+        toks: [Tok::N(0); MAXT],
+        n: 0,
+    };
+    let mut out = [empty; 7];
+    let mut f = 1;
+    while f < IMM_FORMS {
+        out[f - 1] = build_shift_mem(f);
+        f += 1;
+    }
+    out
+}
+
+static SHIFT_REG: [Entry; 2] = [build_shift_reg(false), build_shift_reg(true)];
+static SHIFT_MEM: [Entry; 7] = build_shift_mems();
+
+/// Plan of the shift or rotate being executed.
+pub fn shift_plan(cpu: &Cpu) -> Plan {
+    let ird = cpu.lat.ird;
+    let e = if (ird >> 6) & 3 == 3 {
+        &SHIFT_MEM[imm_form(ird) - 1]
+    } else {
+        &SHIFT_REG[usize::from((ird >> 6) & 3 == 2)]
+    };
+    &e.toks[..e.n]
+}
+
+/// Hook dispatcher of the shifts and rotates.
+pub fn shift_hook(op: Shift, k: u8, cpu: &mut Cpu) {
+    if k == HK_SHIFT {
+        shift_exec(op, cpu);
+    } else {
+        let ird = cpu.lat.ird;
+        crate::ea::run_ea_hook(cpu, k, (ird & 7) as u8, Size::Word);
+    }
+}
+
+/// Number of rules of a shift: 6 register forms and 7 memory forms.
+pub const N_RULES_SHIFT: usize = 13;
+
+/// Decoding rules of a shift of type `tt` (0 AS, 1 LS, 2 ROX, 3 RO) and direction `left`.
+pub const fn shift_rules(tt: u16, left: bool, id: InsnId) -> [Rule; N_RULES_SHIFT] {
+    let d: u16 = if left { 0x100 } else { 0 };
+    let mut out = [Rule {
+        mask: 0,
+        value: 0,
+        id: InsnId::ILLEGAL,
+        variant: 0,
+    }; N_RULES_SHIFT];
+    let mut k = 0;
+    let mut s = 0;
+    while s < 3 {
+        let mut i = 0;
+        while i < 2 {
+            out[k] = Rule {
+                mask: 0xF1F8,
+                value: 0xE000 | d | ((s as u16) << 6) | ((i as u16) << 5) | (tt << 3),
+                id,
+                variant: 0,
+            };
+            k += 1;
+            i += 1;
+        }
+        s += 1;
+    }
+    let mut f = 1;
+    while f < IMM_FORMS {
+        let (m, v): (u16, u16) = match f {
+            1 => (0x38, 2 << 3),
+            2 => (0x38, 3 << 3),
+            3 => (0x38, 4 << 3),
+            4 => (0x38, 5 << 3),
+            5 => (0x38, 6 << 3),
+            6 => (0x3F, 0x38),
+            _ => (0x3F, 0x39),
+        };
+        out[k] = Rule {
+            mask: 0xFFC0 | m,
+            value: 0xE0C0 | (tt << 9) | d | v,
+            id,
+            variant: 0,
+        };
+        k += 1;
+        f += 1;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

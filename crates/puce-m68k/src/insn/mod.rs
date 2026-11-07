@@ -16,6 +16,8 @@ pub mod i_add;
 pub mod i_adda;
 pub mod i_addx;
 pub mod i_and;
+pub mod i_asl;
+pub mod i_asr;
 pub mod i_clr;
 pub mod i_cmp;
 pub mod i_cmpa;
@@ -26,6 +28,8 @@ pub mod i_exg;
 pub mod i_ext;
 pub mod i_lea;
 pub mod i_link;
+pub mod i_lsl;
+pub mod i_lsr;
 pub mod i_move;
 pub mod i_movea;
 pub mod i_movem;
@@ -38,6 +42,10 @@ pub mod i_negx;
 pub mod i_not;
 pub mod i_or;
 pub mod i_pea;
+pub mod i_rol;
+pub mod i_ror;
+pub mod i_roxl;
+pub mod i_roxr;
 pub mod i_sub;
 pub mod i_suba;
 pub mod i_subx;
@@ -83,6 +91,14 @@ const GROUPS: &[&[Rule]] = &[
     i_or::RULES,
     i_eor::RULES,
     i_not::RULES,
+    i_asl::RULES,
+    i_asr::RULES,
+    i_lsl::RULES,
+    i_lsr::RULES,
+    i_rol::RULES,
+    i_ror::RULES,
+    i_roxl::RULES,
+    i_roxr::RULES,
     // @groups
 ];
 
@@ -122,6 +138,14 @@ const GROUPS: &[&[Rule]] = &[
     i_or::RULES,
     i_eor::RULES,
     i_not::RULES,
+    i_asl::RULES,
+    i_asr::RULES,
+    i_lsl::RULES,
+    i_lsr::RULES,
+    i_rol::RULES,
+    i_ror::RULES,
+    i_roxl::RULES,
+    i_roxr::RULES,
     // @tgroups
     testing::RULES,
 ];
@@ -203,6 +227,14 @@ pub(crate) fn plan_for(id: InsnId, variant: u8, cpu: &mut Cpu) -> Plan {
         i_or::ID => i_or::plan(variant, cpu),
         i_eor::ID => i_eor::plan(variant, cpu),
         i_not::ID => i_not::plan(variant, cpu),
+        i_asl::ID => i_asl::plan(variant, cpu),
+        i_asr::ID => i_asr::plan(variant, cpu),
+        i_lsl::ID => i_lsl::plan(variant, cpu),
+        i_lsr::ID => i_lsr::plan(variant, cpu),
+        i_rol::ID => i_rol::plan(variant, cpu),
+        i_ror::ID => i_ror::plan(variant, cpu),
+        i_roxl::ID => i_roxl::plan(variant, cpu),
+        i_roxr::ID => i_roxr::plan(variant, cpu),
         // @plans
         #[cfg(test)]
         testing::ID => testing::plan(variant),
@@ -247,6 +279,14 @@ pub(crate) fn run_hook(id: InsnId, k: u8, cpu: &mut Cpu) {
         i_or::ID => i_or::hook(k, cpu),
         i_eor::ID => i_eor::hook(k, cpu),
         i_not::ID => i_not::hook(k, cpu),
+        i_asl::ID => i_asl::hook(k, cpu),
+        i_asr::ID => i_asr::hook(k, cpu),
+        i_lsl::ID => i_lsl::hook(k, cpu),
+        i_lsr::ID => i_lsr::hook(k, cpu),
+        i_rol::ID => i_rol::hook(k, cpu),
+        i_ror::ID => i_ror::hook(k, cpu),
+        i_roxl::ID => i_roxl::hook(k, cpu),
+        i_roxr::ID => i_roxr::hook(k, cpu),
         // @hooks
         #[cfg(test)]
         testing::ID => testing::hook(k, cpu),
