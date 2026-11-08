@@ -30,6 +30,29 @@ pub(crate) struct Latch {
     pub(crate) vec: u8,
     /// Interrupt level being acknowledged (E11).
     pub(crate) level: u8,
+    /// Address of the instruction being executed (`PC - 4` when it starts).
+    pub(crate) ipc: u32,
+    /// Address error frame: step of the push sequence.
+    pub(crate) ae_step: u8,
+    /// Address error frame: PC, SR, IR, access address and status word to push.
+    pub(crate) ae: [u32; 6],
+    /// SR at the start of the instruction.
+    pub(crate) sr0: u16,
+}
+
+/// A word or long access at an odd address, caught when its bus cycle starts.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Fault {
+    /// Full 32-bit address of the access.
+    pub(crate) addr: u32,
+    pub(crate) write: bool,
+    pub(crate) fc: u8,
+    /// Post-increment hook following the aborted token: the oracle applies it anyway.
+    pub(crate) post: Option<u8>,
+    /// The aborted token was a long access.
+    pub(crate) long: bool,
+    /// The last prefetch of the instruction is done: the frame holds the next opcode.
+    pub(crate) last_pf_done: bool,
 }
 
 /// What the engine does at its next clock.
@@ -48,6 +71,10 @@ pub(crate) struct Cur {
     pub(crate) tas: bool,
     /// Clock inside the current bus cycle (0..=3) for a bus token.
     pub(crate) clock: u8,
+    /// Unmasked address of the access.
+    pub(crate) raw: u32,
+    /// Word or long access at an odd address: an address error, no data cycle.
+    pub(crate) fault: bool,
 }
 
 impl Cur {
@@ -82,6 +109,8 @@ pub(crate) struct Engine {
     /// Internal clocks not yet written to the journal.
     #[cfg(feature = "inspect")]
     idle_acc: u32,
+    /// Address error detected, to be taken by the CPU.
+    fault: Option<Fault>,
 }
 
 impl Engine {
@@ -101,7 +130,13 @@ impl Engine {
             cyc_clocks: 0,
             #[cfg(feature = "inspect")]
             idle_acc: 0,
+            fault: None,
         }
+    }
+
+    /// Address error caught by the last clock, if any.
+    pub(crate) fn take_fault(&mut self) -> Option<Fault> {
+        self.fault.take()
     }
 
     pub(crate) fn start(&mut self, plan: Plan) {
@@ -196,6 +231,8 @@ impl Engine {
                     lds: false,
                     tas: false,
                     clock: self.clk,
+                    raw: self.last_addr,
+                    fault: false,
                 });
             }
             Tok::Nv => {
@@ -208,6 +245,8 @@ impl Engine {
                     lds: false,
                     tas: false,
                     clock: self.clk,
+                    raw: self.last_addr,
+                    fault: false,
                 });
             }
             Tok::H(_) => unreachable!("hooks are skipped"),
@@ -251,6 +290,8 @@ impl Engine {
             lds,
             tas: matches!(tok, Tok::Tas(_)),
             clock: self.clk % 4,
+            raw: base,
+            fault: !byte && base & 1 != 0 && self.clk < 4,
         })
     }
 
@@ -276,6 +317,51 @@ impl Engine {
             }
             return out;
         };
+        if cur.fault {
+            // Odd address: the cycle is aborted before the data strobes. It lasts 4 clocks, then
+            // the CPU takes the address error (the rest of the plan is dropped).
+            let out = idle_pins(cur.fc, cur.addr);
+            self.last_addr = cur.addr;
+            #[cfg(feature = "inspect")]
+            {
+                self.cyc_clocks += 1;
+            }
+            if cur.clock == 3 {
+                #[cfg(feature = "inspect")]
+                {
+                    self.journal.push(BusEvent {
+                        kind: if cur.is_write() { 5 } else { 4 },
+                        clocks: self.cyc_clocks,
+                        fc: cur.fc,
+                        addr: cur.addr,
+                        data: 0,
+                        uds: true,
+                        lds: true,
+                    });
+                    self.cyc_clocks = 0;
+                }
+                let post = match self.plan.get(self.idx + 1) {
+                    Some(Tok::H(k)) if *k == crate::ea::HK_AN_POSTINC => Some(*k),
+                    _ => None,
+                };
+                self.fault = Some(Fault {
+                    addr: cur.raw,
+                    write: cur.is_write(),
+                    fc: cur.fc,
+                    post,
+                    long: matches!(self.plan.get(self.idx), Some(Tok::Rl(_) | Tok::Wl(_))),
+                    last_pf_done: !matches!(self.plan.get(self.idx), Some(Tok::Pf))
+                        && !self.plan[self.idx..].contains(&Tok::Pf),
+                });
+                self.idx = self.plan.len();
+                self.clk = 0;
+                self.hn = 0;
+                self.hp = 0;
+            } else {
+                self.clk += 1;
+            }
+            return out;
+        }
         // DTACK is sampled at clock 2 of every bus cycle: repeat the clock while it is low.
         let wait = cur.clock == 2 && !pins.dtack();
         let tok = self.plan.get(self.idx).copied();

@@ -43,6 +43,9 @@ pub const HK_SUP_EARLY: u8 = 0xFE;
 /// Hook: the pushed PC is `PC - 4`, taken after the prefetch.
 pub const HK_PC_SET: u8 = 0xFF;
 
+/// Hook: next word of the address error frame (`Latch::ae`), see [`ae_push`].
+pub const HK_AE_PUSH: u8 = 0xE0;
+
 /// Vector number of the privilege violation.
 pub const VEC_PRIVILEGE: u8 = 8;
 /// First autovector (level 1 is vector 25).
@@ -191,6 +194,146 @@ pub fn privilege_violation() -> Plan {
 /// Generic exception plan (34 clocks), vector number in `Latch::vec`: `nn ns ns ns nV nv np n np`.
 pub fn exception_plan() -> Plan {
     &EXCEPTION
+}
+
+// Address error (50 clocks after the aborted cycle): `n(8) ns ns ns ns ns ns ns nV nv np n np`;
+// the frame has 14 bytes (status, access address, IR, SR, PC).
+static ADDRESS_ERROR: [Tok; 21] = [
+    Tok::N(8),
+    Tok::H(HK_AE_PUSH),
+    Tok::Ww(AddrSrc::Ea),
+    Tok::H(HK_AE_PUSH),
+    Tok::Ww(AddrSrc::Ea),
+    Tok::H(HK_AE_PUSH),
+    Tok::Ww(AddrSrc::Ea),
+    Tok::H(HK_AE_PUSH),
+    Tok::Ww(AddrSrc::Ea),
+    Tok::H(HK_AE_PUSH),
+    Tok::Ww(AddrSrc::Ea),
+    Tok::H(HK_AE_PUSH),
+    Tok::Ww(AddrSrc::Ea),
+    Tok::H(HK_AE_PUSH),
+    Tok::Ww(AddrSrc::Ea),
+    Tok::H(HK_VECTOR),
+    Tok::Rl(AddrSrc::Ea),
+    Tok::H(HK_JUMP),
+    Tok::Pf,
+    Tok::N(2),
+    Tok::Pf,
+];
+
+/// Plan of the address error exception, after the aborted bus cycle (vector 3 in `Latch::vec`).
+pub fn address_error_plan() -> Plan {
+    &ADDRESS_ERROR
+}
+
+/// Pushes the next word of the address error frame: PC low, SR, PC high, IR, access address low,
+/// status word, access address high (`Latch::ae` = PC, SR, IR, address, status).
+pub fn ae_push(cpu: &mut Cpu) {
+    let ssp = cpu.regs.ssp;
+    let [pc, sr, ir, addr, status, _] = cpu.lat.ae;
+    let (off, val) = match cpu.lat.ae_step {
+        0 => (2, pc & 0xFFFF),
+        1 => (6, sr),
+        2 => (4, pc >> 16),
+        3 => (8, ir),
+        4 => (10, addr & 0xFFFF),
+        5 => (14, status),
+        _ => (12, addr >> 16),
+    };
+    cpu.lat.ea = ssp.wrapping_sub(off);
+    cpu.lat.val = val;
+    if cpu.lat.ae_step == 6 {
+        cpu.regs.ssp = ssp.wrapping_sub(14);
+    }
+    cpu.lat.ae_step += 1;
+}
+
+/// PC pushed by an address error: the 68000 stacks a value that depends on the instruction, its
+/// addressing mode and how far the prefetch had gone (table derived from the oracle, D-052).
+/// `ipc` is the address of the instruction, `addr` the faulting address, `write` the direction.
+pub fn ae_pc(ird: u16, write: bool, ipc: u32, addr: u32) -> u32 {
+    let base = ipc.wrapping_add(2);
+    let mode = ((ird >> 3) & 7) as u8;
+    let reg = (ird & 7) as u8;
+    // Extension words of an addressing mode.
+    let words = |m: u8, r: u8| -> u32 {
+        match (m, r) {
+            (5 | 6, _) | (7, 0 | 2 | 3) => 1,
+            (7, 1) => 2,
+            _ => 0,
+        }
+    };
+    let hi = ird >> 12;
+    let sz = (ird >> 6) & 3;
+    // Special instructions first.
+    match ird {
+        0x4E73 | 0x4E75 | 0x4E77 => return base, // RTE, RTS, RTR
+        0x4E58..=0x4E5F => return base.wrapping_add(2), // UNLK
+        _ => {}
+    }
+    if ird & 0xFFC0 == 0x4EC0 {
+        return base; // JMP
+    }
+    if ird & 0xFFC0 == 0x4E80 {
+        return base.wrapping_add(2 * words(mode, reg)); // JSR
+    }
+    if hi == 6 {
+        // BSR stacks the target, a taken Bcc the address after its opcode.
+        return if ird >> 8 == 0x61 { addr } else { base };
+    }
+    if hi == 5 && ird & 0xF8 == 0xC8 {
+        return base.wrapping_add(2); // DBcc
+    }
+    if ird & 0xFB80 == 0x4880 {
+        // MOVEM: the register mask is one more extension word.
+        return base.wrapping_add(4 + 2 * words(mode, reg));
+    }
+    if matches!(ird & 0xF138, 0xD108 | 0x9108 | 0xB108) && sz != 3 {
+        return base.wrapping_add(2); // ADDX, SUBX, CMPM
+    }
+    let long = match hi {
+        1..=3 => hi == 2,
+        0 | 5 => sz == 2,
+        4 => matches!(ird & 0xFF00, 0x4000 | 0x4200 | 0x4400 | 0x4600 | 0x4A00) && sz == 2,
+        9 | 0xB | 0xD => (ird >> 6) & 7 == 7 || sz == 2,
+        8 | 0xC => sz == 2,
+        _ => false,
+    };
+    // Extra offset of a read through one effective address.
+    let single = |m: u8, r: u8| -> u32 {
+        match (m, r) {
+            (4, _) if !long => 2,
+            (7, 0) => 2,
+            (7, 1) => 4,
+            _ => 0,
+        }
+    };
+    if (1..=3).contains(&hi) {
+        if !write {
+            return base.wrapping_add(single(mode, reg));
+        }
+        let dm = ((ird >> 6) & 7) as u8;
+        let dr = ((ird >> 9) & 7) as u8;
+        let sw = match (mode, reg) {
+            (7, 4) if long => 2,
+            (7, 4) => 1,
+            _ => words(mode, reg),
+        };
+        let abs_long_dst = dm == 7 && dr == 1 && mode < 2;
+        return base.wrapping_add(2 + 2 * sw + if abs_long_dst { 2 } else { 0 });
+    }
+    // Immediate operand of ORI, ANDI, SUBI, ADDI, EORI, CMPI.
+    let imm = if hi == 0 && matches!(ird & 0xF00, 0x000 | 0x200 | 0x400 | 0x600 | 0xA00 | 0xC00) {
+        if long {
+            2
+        } else {
+            1
+        }
+    } else {
+        0
+    };
+    base.wrapping_add(single(mode, reg) + 2 * imm)
 }
 
 /// Interrupt plan (44 clocks): the last `np` is appended below so the plan stays static.
@@ -472,6 +615,442 @@ mod tests {
         c.reset();
         c.step(&mut r);
         assert_eq!(c.regs.sr, 0x2700);
+    }
+
+    /// CPU at PC = 0x20 (opcode `op` at 0x1C), A0 = `a0`, SSP 0x800.
+    fn ae_cpu(op: u16, a0: u32, sr: u16, ssp: u32) -> Cpu {
+        let mut c = Cpu::new();
+        let mut a = [0u32; 7];
+        a[0] = a0;
+        c.load_state(&CpuState {
+            a,
+            d: [0x1111_2222; 8],
+            usp: 0x400,
+            ssp,
+            sr,
+            pc: 0x20,
+            prefetch: [op, 0x4E71],
+        });
+        c
+    }
+
+    const VEC3: [(u32, u16); 2] = [(0xC, 0), (0xE, 0x3000)];
+
+    #[test]
+    fn e11_03_odd_word_read() {
+        // MOVE.w (A0),D1 with A0 odd: the read is aborted, vector 3 is taken.
+        let mut r = ram(&VEC3);
+        let mut c = ae_cpu(0x3210, 0x1001, 0x2000, 0x800);
+        let n = c.step(&mut r);
+        assert_eq!(c.regs.pc, 0x3004);
+        assert_eq!(n, 58);
+        assert!(!r.reads.iter().any(|(a, _)| *a == 0x1000), "no data cycle");
+        assert_eq!(c.regs.d[1], 0x1111_2222, "no commit");
+    }
+
+    #[test]
+    fn e11_03_frame_14_bytes() {
+        let mut r = ram(&VEC3);
+        let mut c = ae_cpu(0x3210, 0x1001, 0x2000, 0x800);
+        c.step(&mut r);
+        assert_eq!(c.regs.ssp, 0x800 - 14);
+        assert_eq!(
+            r.writes,
+            std::vec![
+                (0x7FE, 0x1E),   // PC low
+                (0x7FA, 0x2000), // SR
+                (0x7FC, 0),      // PC high
+                (0x7F8, 0x3210), // IR
+                (0x7F6, 0x1001), // access address low
+                (0x7F2, 0x3215), // status: read, supervisor data
+                (0x7F4, 0),      // access address high
+            ]
+        );
+    }
+
+    #[test]
+    fn e11_03_status_word() {
+        // Write access in user mode: R/W = 0, FC = 1, the old SR is stacked, S set and T cleared.
+        let mut r = ram(&VEC3);
+        let mut c = ae_cpu(0x3081, 0x1001, 0x8010, 0x800);
+        c.regs.usp = 0x400;
+        c.step(&mut r);
+        assert_eq!(c.regs.sr, 0x2010);
+        let status = r.writes.iter().find(|(a, _)| *a == 0x7F2).unwrap().1;
+        assert_eq!(status, 0x3081 & 0xFFE0 | 1);
+        assert_eq!(r.writes[1], (0x7FA, 0x8010));
+    }
+
+    #[test]
+    fn e11_03_no_commit_write() {
+        let mut r = ram(&VEC3);
+        let mut c = ae_cpu(0x3081, 0x1001, 0x2000, 0x800);
+        c.step(&mut r);
+        // Seven stack writes only: nothing reached the faulting address.
+        assert_eq!(r.writes.len(), 7);
+        assert!(r.writes.iter().all(|(a, _)| (0x7F2..0x800).contains(a)));
+    }
+
+    #[test]
+    fn e11_03_odd_pc_fetch() {
+        // JMP (A0) to an odd address: the fetch of the target is the aborted cycle.
+        let mut r = ram(&VEC3);
+        let mut c = ae_cpu(0x4ED0, 0x1001, 0x2000, 0x800);
+        c.step(&mut r);
+        assert_eq!(c.regs.pc, 0x3004);
+        assert_eq!(r.writes.len(), 7);
+        assert_eq!(r.writes[4], (0x7F6, 0x1001));
+    }
+
+    #[test]
+    fn e11_03_double_fault() {
+        // Odd SSP: the frame itself faults, the CPU halts.
+        let mut r = ram(&VEC3);
+        let mut c = ae_cpu(0x3210, 0x1001, 0x2000, 0x801);
+        c.step(&mut r);
+        assert!(c.is_halted());
+    }
+
+    /// Vector table: every vector in `vecs` leads to 0x3000.
+    fn vtable(vecs: &[u32]) -> Ram {
+        let mut m = std::vec::Vec::new();
+        for v in vecs {
+            m.push((v * 4, 0));
+            m.push((v * 4 + 2, 0x3000));
+        }
+        ram(&m)
+    }
+
+    /// CPU with `op` in IR, `ext` in IRC, SR = `sr`, SSP 0x800.
+    fn op_cpu(op: u16, ext: u16, sr: u16) -> Cpu {
+        let mut c = ae_cpu(op, 0, sr, 0x800);
+        c.regs.irc = ext;
+        c
+    }
+
+    /// Clocks of one instruction and the PC reached.
+    fn run1(c: &mut Cpu, r: &mut Ram) -> (u32, u32) {
+        let n = c.step(r);
+        (n, c.regs.pc)
+    }
+
+    #[test]
+    fn e11_04_illegal_vector4() {
+        let mut r = vtable(&[4]);
+        let mut c = op_cpu(0x4AFC, 0x4E71, 0x2000);
+        assert_eq!(run1(&mut c, &mut r), (34, 0x3004));
+    }
+
+    #[test]
+    fn e11_04_line_a_vector10() {
+        let mut r = vtable(&[10]);
+        let mut c = op_cpu(0xA000, 0x4E71, 0x2000);
+        assert_eq!(run1(&mut c, &mut r), (34, 0x3004));
+    }
+
+    #[test]
+    fn e11_04_line_f_vector11() {
+        let mut r = vtable(&[11]);
+        let mut c = op_cpu(0xF000, 0x4E71, 0x2000);
+        assert_eq!(run1(&mut c, &mut r), (34, 0x3004));
+    }
+
+    #[test]
+    fn e11_04_privilege_vector8() {
+        // RTE, STOP and RESET in user mode.
+        for (op, ext) in [(0x4E73u16, 0x4E71u16), (0x4E72, 0x2700), (0x4E70, 0x4E71)] {
+            let mut r = vtable(&[8]);
+            let mut c = op_cpu(op, ext, 0x0000);
+            assert_eq!(run1(&mut c, &mut r), (34, 0x3004), "{op:#06x}");
+            assert_eq!(c.regs.sr & 0x2000, 0x2000);
+        }
+    }
+
+    #[test]
+    fn e11_07_decode_legal() {
+        // TRAP #0..#15 take vectors 32..47.
+        for n in 0..16u16 {
+            let mut r = vtable(&[32 + u32::from(n)]);
+            let mut c = op_cpu(0x4E40 | n, 0x4E71, 0x2000);
+            assert_eq!(run1(&mut c, &mut r).1, 0x3004, "TRAP #{n}");
+        }
+    }
+
+    #[test]
+    fn e11_07_decode_illegal() {
+        // 0x4E50 is LINK, not TRAP: no vector 32+.
+        let mut r = vtable(&[4]);
+        let mut c = op_cpu(0x4E50, 0x0000, 0x2000);
+        assert_ne!(run1(&mut c, &mut r).1, 0x3004);
+    }
+
+    #[test]
+    fn e11_07_plan_basic() {
+        let mut r = vtable(&[33]);
+        let mut c = op_cpu(0x4E41, 0x4E71, 0x2000);
+        assert_eq!(run1(&mut c, &mut r).0, 34);
+    }
+
+    #[test]
+    fn e11_07_flags_sample() {
+        // TRAP stacks SR and the PC after the opcode; T is cleared, S set, flags kept.
+        let mut r = vtable(&[33]);
+        let mut c = op_cpu(0x4E41, 0x4E71, 0x801F);
+        run1(&mut c, &mut r);
+        assert_eq!(c.regs.sr, 0x201F);
+        assert_eq!(r.writes[1], (0x7FA, 0x801F));
+        assert_eq!(r.writes[0], (0x7FE, 0x1E));
+    }
+
+    #[test]
+    fn e11_08_decode_legal() {
+        let mut r = vtable(&[7]);
+        let mut c = op_cpu(0x4E76, 0x4E71, 0x2002);
+        assert_eq!(run1(&mut c, &mut r), (34, 0x3004));
+    }
+
+    #[test]
+    fn e11_08_decode_illegal() {
+        // 0x4E77 is RTR: no trap even with V set.
+        let mut r = vtable(&[7]);
+        let mut c = op_cpu(0x4E77, 0x4E71, 0x2002);
+        c.regs.a[6] = 0;
+        assert_ne!(run1(&mut c, &mut r).1, 0x3004);
+    }
+
+    #[test]
+    fn e11_08_plan_basic() {
+        // V clear: 4 clocks.
+        let mut r = vtable(&[7]);
+        let mut c = op_cpu(0x4E76, 0x4E71, 0x2000);
+        assert_eq!(run1(&mut c, &mut r).0, 4);
+    }
+
+    #[test]
+    fn e11_08_flags_sample() {
+        let mut r = vtable(&[7]);
+        let mut c = op_cpu(0x4E76, 0x4E71, 0x0003);
+        run1(&mut c, &mut r);
+        assert_eq!(c.regs.sr, 0x2003);
+    }
+
+    #[test]
+    fn e11_09_decode_legal() {
+        // CHK D1,D0: D0 above the bound takes vector 6.
+        let mut r = vtable(&[6]);
+        let mut c = op_cpu(0x4181, 0x4E71, 0x2000);
+        c.regs.d[0] = 20;
+        c.regs.d[1] = 10;
+        assert_eq!(run1(&mut c, &mut r).1, 0x3004);
+    }
+
+    #[test]
+    fn e11_09_decode_illegal() {
+        // 0x4180 with an odd size field (LEA/CHK long are illegal on the 68000): 0x41C0 is LEA.
+        let mut r = vtable(&[6]);
+        let mut c = op_cpu(0x41C0, 0x4E71, 0x2000);
+        assert_ne!(run1(&mut c, &mut r).1, 0x3004);
+    }
+
+    #[test]
+    fn e11_09_plan_basic() {
+        // In range: 10 clocks; D0 > bound: 38; D0 < 0: 40.
+        let cases = [(5u32, 10u32, 10u32), (20, 10, 38), (0xFFFF_FFFF, 10, 40)];
+        for (d0, d1, clocks) in cases {
+            let mut r = vtable(&[6]);
+            let mut c = op_cpu(0x4181, 0x4E71, 0x2000);
+            c.regs.d[0] = d0;
+            c.regs.d[1] = d1;
+            assert_eq!(run1(&mut c, &mut r).0, clocks, "D0={d0:#x}");
+        }
+    }
+
+    #[test]
+    fn e11_09_flags_sample() {
+        // D0 above the bound clears N; D0 negative sets it.
+        for (d0, n) in [(20u32, 0u16), (0xFFFF_FFFF, 8)] {
+            let mut r = vtable(&[6]);
+            let mut c = op_cpu(0x4181, 0x4E71, 0x2000);
+            c.regs.d[0] = d0;
+            c.regs.d[1] = 10;
+            run1(&mut c, &mut r);
+            assert_eq!(c.regs.sr & 8, n, "D0={d0:#x}");
+        }
+    }
+
+    #[test]
+    fn e11_10_decode_legal() {
+        for op in [0xA000u16, 0xA123, 0xAFFF] {
+            let mut r = vtable(&[10]);
+            let mut c = op_cpu(op, 0x4E71, 0x2000);
+            assert_eq!(run1(&mut c, &mut r).1, 0x3004);
+        }
+    }
+
+    #[test]
+    fn e11_10_decode_illegal() {
+        let mut r = vtable(&[10]);
+        let mut c = op_cpu(0xB000, 0x4E71, 0x2000);
+        assert_ne!(run1(&mut c, &mut r).1, 0x3004);
+    }
+
+    #[test]
+    fn e11_10_plan_basic() {
+        let mut r = vtable(&[10]);
+        let mut c = op_cpu(0xA000, 0x4E71, 0x2000);
+        assert_eq!(run1(&mut c, &mut r).0, 34);
+    }
+
+    #[test]
+    fn e11_10_flags_sample() {
+        // The stacked PC is the address of the line A opcode itself.
+        let mut r = vtable(&[10]);
+        let mut c = op_cpu(0xA000, 0x4E71, 0x2015);
+        run1(&mut c, &mut r);
+        assert_eq!(c.regs.sr, 0x2015);
+        assert_eq!(r.writes[0], (0x7FE, 0x1C));
+    }
+
+    #[test]
+    fn e11_11_decode_legal() {
+        for op in [0xF000u16, 0xF123, 0xFFFF] {
+            let mut r = vtable(&[11]);
+            let mut c = op_cpu(op, 0x4E71, 0x2000);
+            assert_eq!(run1(&mut c, &mut r).1, 0x3004);
+        }
+    }
+
+    #[test]
+    fn e11_11_decode_illegal() {
+        let mut r = vtable(&[11]);
+        let mut c = op_cpu(0xE000, 0x4E71, 0x2000);
+        assert_ne!(run1(&mut c, &mut r).1, 0x3004);
+    }
+
+    #[test]
+    fn e11_11_plan_basic() {
+        let mut r = vtable(&[11]);
+        let mut c = op_cpu(0xF000, 0x4E71, 0x2000);
+        assert_eq!(run1(&mut c, &mut r).0, 34);
+    }
+
+    #[test]
+    fn e11_11_flags_sample() {
+        let mut r = vtable(&[11]);
+        let mut c = op_cpu(0xF000, 0x4E71, 0x2015);
+        run1(&mut c, &mut r);
+        assert_eq!(c.regs.sr, 0x2015);
+        assert_eq!(r.writes[0], (0x7FE, 0x1C));
+    }
+
+    /// Supervisor stack holding SR and PC for an RTE.
+    fn rte_ram(sr: u16, pc: u32) -> Ram {
+        ram(&[
+            (0x800, sr),
+            (0x802, (pc >> 16) as u16),
+            (0x804, pc as u16),
+            (0x3000, 0x4E71),
+            (0x3002, 0x4E71),
+        ])
+    }
+
+    #[test]
+    fn e11_12_decode_legal() {
+        let mut r = rte_ram(0x0004, 0x3000);
+        let mut c = op_cpu(0x4E73, 0x4E71, 0x2000);
+        assert_eq!(run1(&mut c, &mut r).1, 0x3004);
+    }
+
+    #[test]
+    fn e11_12_decode_illegal() {
+        // 0x4E74 is RTD (68010): illegal on the 68000.
+        let mut r = vtable(&[4]);
+        let mut c = op_cpu(0x4E74, 0x0000, 0x2000);
+        assert_eq!(run1(&mut c, &mut r), (34, 0x3004));
+    }
+
+    #[test]
+    fn e11_12_plan_basic() {
+        let mut r = rte_ram(0x0004, 0x3000);
+        let mut c = op_cpu(0x4E73, 0x4E71, 0x2000);
+        assert_eq!(run1(&mut c, &mut r).0, 20);
+    }
+
+    #[test]
+    fn e11_12_flags_sample() {
+        // SR comes back from the stack (user mode), the stack pointer moves by 6.
+        let mut r = rte_ram(0x0015, 0x3000);
+        let mut c = op_cpu(0x4E73, 0x4E71, 0x2000);
+        run1(&mut c, &mut r);
+        assert_eq!(c.regs.sr, 0x0015);
+        assert_eq!(c.regs.ssp, 0x806);
+    }
+
+    #[test]
+    fn e11_13_decode_legal() {
+        let mut r = vtable(&[]);
+        let mut c = op_cpu(0x4E72, 0x2000, 0x2700);
+        c.step(&mut r);
+        assert!(c.is_stopped());
+    }
+
+    #[test]
+    fn e11_13_decode_illegal() {
+        // 0x4E71 is NOP: it does not stop.
+        let mut r = vtable(&[]);
+        let mut c = op_cpu(0x4E71, 0x4E71, 0x2700);
+        c.step(&mut r);
+        assert!(!c.is_stopped());
+    }
+
+    #[test]
+    fn e11_13_plan_basic() {
+        // STOP takes 4 clocks, then the CPU idles 4 clocks per step.
+        let mut r = vtable(&[]);
+        let mut c = op_cpu(0x4E72, 0x2000, 0x2700);
+        assert_eq!(c.step(&mut r), 4);
+        assert_eq!(c.step(&mut r), 4);
+        assert!(c.is_stopped());
+    }
+
+    #[test]
+    fn e11_13_flags_sample() {
+        // The immediate word replaces SR.
+        let mut r = vtable(&[]);
+        let mut c = op_cpu(0x4E72, 0x2015, 0x2700);
+        c.step(&mut r);
+        assert_eq!(c.regs.sr, 0x2015);
+    }
+
+    #[test]
+    fn e11_14_decode_legal() {
+        let mut r = vtable(&[]);
+        let mut c = op_cpu(0x4E70, 0x4E71, 0x2000);
+        assert_eq!(c.step(&mut r), 132);
+    }
+
+    #[test]
+    fn e11_14_decode_illegal() {
+        // 0x4E71 is NOP, not RESET.
+        let mut r = vtable(&[]);
+        let mut c = op_cpu(0x4E71, 0x4E71, 0x2000);
+        assert_eq!(c.step(&mut r), 4);
+    }
+
+    #[test]
+    fn e11_14_plan_basic() {
+        let mut r = vtable(&[]);
+        let mut c = op_cpu(0x4E70, 0x4E71, 0x2000);
+        assert_eq!(c.step(&mut r), 132);
+    }
+
+    #[test]
+    fn e11_14_flags_sample() {
+        // RESET asserts the reset line only: registers and flags are untouched.
+        let mut r = vtable(&[]);
+        let mut c = op_cpu(0x4E70, 0x4E71, 0x201F);
+        c.step(&mut r);
+        assert_eq!(c.regs.sr, 0x201F);
     }
 
     #[test]

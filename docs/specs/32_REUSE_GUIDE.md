@@ -101,7 +101,7 @@ DTACK for the next clock and calls `tick` again. Specification: `docs/specs/11_P
   prefetch queue: 34 clocks (44 for an interrupt, 40 for reset).
 - Call `Cpu::exception(vector)` to raise an exception from the host, `Cpu::reset()` for a reset, `Cpu::halt()`
   to stop the CPU. `Cpu::load_state(&CpuState)` and `Cpu::state()` save and restore the registers.
-- Address errors (odd word or long access) and bus errors are not generated yet: see the status below.
+- A word or long access at an odd address (or an odd PC) raises an address error: the aborted cycle takes 4 clocks, then the 14-byte group 0 frame (vector 3) is pushed. Bus errors have no input.
 
 ## 4. Mapping a machine
 
@@ -122,8 +122,9 @@ clocks returned.
 - All 68000 instructions run and are verified against the SingleStepTests/m68000 oracle (317500 tests):
   `docs/SUITES_REPORT.md` has the per-file results. No file fails (`TAS` included: the core tags its read
   as an indivisible cycle, the oracle as a plain read, and the runner treats both alike).
-- The oracle cases that raise an address error are skipped; the frame generation for address errors is a
-  deferred task (the CPU does not fault on odd accesses yet), and there is no bus error input.
+- The oracle cases that raise an address error pass too (frame, pushed PC and IR, flags, registers); the pushed
+  values follow tables derived from the oracle (decision D-052). A second fault during the frame halts the
+  CPU. There is no bus error input.
 - The core is `no_std`, single-threaded and allocation free. The `inspect` feature records a bus journal
   for debuggers and tests.
 - Speed: `m68k bench` measures about 90 MHz of emulated 68000 clock per second in release mode on the

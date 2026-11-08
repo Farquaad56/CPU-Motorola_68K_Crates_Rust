@@ -241,7 +241,7 @@ pub fn parse_file(bytes: &[u8]) -> Result<Vec<Test>, String> {
 pub enum Outcome {
     /// The final state and the bus transactions match.
     Pass,
-    /// The test contains an address error cycle (`re`/`we`): ignored until E11 (D-030).
+    /// Kept for the summary format: address error tests are no longer skipped (D-052).
     SkipAddrError,
     /// First difference found (names the test, the field, expected and obtained values).
     Fail(String),
@@ -282,10 +282,13 @@ fn compare_trans(expected: &[Trans], got: &[BusEvent]) -> Result<(), String> {
             fields.extend([
                 ("fc", e.fc, u32::from(g.fc)),
                 ("addr", e.addr, g.addr),
-                ("data", e.data, u32::from(g.data)),
                 ("uds", e.uds, u32::from(g.uds)),
                 ("lds", e.lds, u32::from(g.lds)),
             ]);
+            // The data of an aborted cycle is whatever floated on the bus: not compared.
+            if !matches!(e.kind, Kind::ReadAddrErr | Kind::WriteAddrErr) {
+                fields.push(("data", e.data, u32::from(g.data)));
+            }
         }
         for (name, want, have) in fields {
             if want != have {
@@ -339,12 +342,6 @@ fn compare_state(cpu: &CpuState, want: &State) -> Result<(), String> {
 /// Runs one test on `cpu` with `ram` as memory and compares the final state and the bus
 /// transactions (spec 33, section 5).
 pub fn run_test(cpu: &mut Cpu, ram: &mut FlatRam, t: &Test) -> Outcome {
-    if t.trans
-        .iter()
-        .any(|x| matches!(x.kind, Kind::ReadAddrErr | Kind::WriteAddrErr))
-    {
-        return Outcome::SkipAddrError;
-    }
     ram.clear_touched();
     for &(addr, word) in &t.initial.ram {
         ram.poke_word(addr, word);
@@ -787,7 +784,7 @@ mod tests {
     }
 
     #[test]
-    fn e03_05_skip_addr_error() {
+    fn e03_05_addr_error_compared() {
         let mut t = idle_test();
         t.trans = vec![Trans {
             kind: Kind::ReadAddrErr,
@@ -798,7 +795,8 @@ mod tests {
             uds: 1,
             lds: 1,
         }];
-        assert_eq!(run(&t), Outcome::SkipAddrError);
+        // Address error cycles are compared like the others (no more skipped, D-052).
+        assert!(matches!(run(&t), Outcome::Fail(_)));
     }
 
     #[test]

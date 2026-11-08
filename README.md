@@ -21,7 +21,7 @@ a command-line tool, a local web debugger and a WebAssembly build.
 - Pins: DTACK, UDS/LDS, FC0-2, AS, R/W, IPL0-2, VPA; or the convenience `Bus` trait with `wait_clocks`,
   `ipl`, `int_ack` and `on_tick`.
 - Exceptions: reset, illegal instruction, line A/F, TRAP, TRAPV, CHK, privilege violation, interrupts
-  (autovector or supplied vector), STOP/RESET/RTE. Address errors and bus errors are not generated yet.
+  (autovector or supplied vector), STOP/RESET/RTE. Address errors (odd word or long access, odd PC) give the 14-byte frame of vector 3; there is no bus error input.
 - `no_std`, `#![forbid(unsafe_code)]`, no dependency, no allocation in the core.
 - Speed: about 90 MHz of emulated 68000 clock per second in release mode (`m68k bench`), against 7-8 MHz on
   real machines.
@@ -33,9 +33,8 @@ generated from MAME's microcoded core) plus `Yacht.txt` for the bus timing of ea
 
 | | Cases |
 |---|---:|
-| Passed | 261894 |
+| Passed | 317500 |
 | Failed | 0 |
-| Skipped (address error, deferred) | 55606 |
 
 Per-file results: [`docs/SUITES_REPORT.md`](docs/SUITES_REPORT.md). `tests/baseline.json` is the reference
 the regression check compares with. No known exception remains: the oracle labels the read of `TAS` as a plain

@@ -65,6 +65,10 @@ impl Cpu {
                 idle: 0,
                 vec: 0,
                 level: 0,
+                ipc: 0,
+                ae_step: 0,
+                ae: [0; 6],
+                sr0: 0,
             },
             cur: Decoded {
                 id: InsnId::ILLEGAL,
@@ -87,7 +91,9 @@ impl Cpu {
     /// Runs the hooks the engine has passed over, in order (they take no clock).
     fn run_hooks(&mut self) {
         while let Some(k) = self.engine.pop_hook() {
-            if exception::is_hook(k) {
+            if k == exception::HK_AE_PUSH && self.in_exception {
+                exception::ae_push(self);
+            } else if exception::is_hook(k) {
                 exception::hook(k, self);
             } else {
                 insn::run_hook(self.cur.id, k, self);
@@ -103,6 +109,8 @@ impl Cpu {
     fn begin_instruction(&mut self) {
         self.cur = decode(self.regs.ir);
         self.lat.ird = self.regs.ir;
+        self.lat.ipc = self.regs.pc.wrapping_sub(4);
+        self.lat.sr0 = self.regs.sr;
         if self.cur.id == InsnId::ILLEGAL {
             // Illegal opcode, line A (vector 10), line F (vector 11): exception with the PC of
             // the instruction itself.
@@ -155,6 +163,9 @@ impl Cpu {
     /// Advances one clock. `pins` carries the inputs (DTACK, DATA), the result the outputs.
     pub fn tick(&mut self, pins: Pins) -> Pins {
         let out = self.engine.step(pins, &mut self.regs, &mut self.lat);
+        if let Some(f) = self.engine.take_fault() {
+            self.address_error(f);
+        }
         self.run_hooks();
         if self.engine.boundary() {
             self.in_exception = false;
@@ -219,6 +230,103 @@ impl Cpu {
             true
         } else {
             false
+        }
+    }
+
+    /// Address error: a word or long access at an odd address (or an odd PC) ends the instruction.
+    /// The 14-byte group 0 frame is pushed and vector 3 is taken. During an exception sequence
+    /// it is a double fault and the CPU halts.
+    fn address_error(&mut self, f: crate::engine::Fault) {
+        if self.in_exception {
+            self.halt();
+            return;
+        }
+        let ird = self.lat.ird;
+        self.ae_side_effects(f, ird);
+        let pc = exception::ae_pc(ird, f.write, self.lat.ipc, f.addr);
+        let rw = if f.write { 0 } else { 0x10 };
+        // The opcode pushed is that of the instruction, or the next one once the last prefetch
+        // of the instruction has been done.
+        // (MOVE.l to -(An) keeps its own opcode: its prefetch comes after the first write.)
+        let moved = f.last_pf_done && !(ird >> 12 == 2 && (ird >> 6) & 7 == 4);
+        let ir = u32::from(if moved { self.regs.ir } else { ird });
+        let status = (ir & 0xFFE0) | rw | u32::from(f.fc);
+        let sr = u32::from(self.regs.sr);
+        self.lat.ae = [pc, sr, ir, f.addr, status, 0];
+        self.lat.ae_step = 0;
+        self.regs.sr = (self.regs.sr | crate::regs::S) & !crate::regs::T;
+        self.lat.vec = 3;
+        self.begin_system_plan(exception::address_error_plan());
+    }
+
+    /// What the aborted instruction has already done to the registers when the oracle takes the
+    /// address error (table derived from the SingleStepTests, D-052).
+    fn ae_side_effects(&mut self, f: crate::engine::Fault, ird: u16) {
+        let hi = ird >> 12;
+        let sz = (ird >> 6) & 3;
+        if let Some(k) = f.post {
+            // A word access through (An)+ has incremented the register; a long one has not.
+            if !f.long {
+                insn::run_hook(self.cur.id, k, self);
+            }
+        }
+        if hi == 5 && ird & 0xF8 == 0xC8 {
+            // DBcc: the counter decrement is not kept.
+            let r = (ird & 7) as usize;
+            let d = self.regs.d[r];
+            self.regs.d[r] = (d & 0xFFFF_0000) | u32::from((d as u16).wrapping_add(1));
+        }
+        let (s, d) = ((ird & 7) as u8, ((ird >> 9) & 7) as u8);
+        if matches!(hi, 0x9 | 0xD) && ird & 0x138 == 0x108 && sz == 2 {
+            // ADDX.l, SUBX.l -(Ay),-(Ax): low word first, the faulting register keeps its value.
+            let r = if s != d && self.regs.an(s).wrapping_add(2) == f.addr {
+                s
+            } else if self.regs.an(d).wrapping_add(2) == f.addr {
+                d
+            } else {
+                s
+            };
+            self.regs.set_an(r, self.regs.an(r).wrapping_add(4));
+        }
+        if hi == 0xB && ird & 0x138 == 0x108 && sz == 2 {
+            // CMPM.l: a fault on the source leaves it a step of 2; on the destination, none.
+            if self.regs.an(s) == f.addr {
+                self.regs.set_an(s, self.regs.an(s).wrapping_add(2));
+            }
+        }
+        if hi == 2 && f.write {
+            // MOVE.l: the flags are set at different moments of the sequence.
+            let (sm, sr_) = ((ird >> 3) & 7, ird & 7);
+            let dm = (ird >> 6) & 7;
+            if dm == 4 {
+                self.regs.set_an(d, self.regs.an(d).wrapping_add(4));
+            }
+            let mem = sm >= 2 && !(sm == 7 && sr_ == 4);
+            let old = self.lat.sr0 & 0x1f;
+            let v = self.lat.val;
+            let nz = |v: u32, bits: u32| -> u16 {
+                let m = if bits == 32 {
+                    u32::MAX
+                } else {
+                    (1 << bits) - 1
+                };
+                let v = v & m;
+                (if v >> (bits - 1) != 0 { 8 } else { 0 }) | (if v == 0 { 4 } else { 0 })
+            };
+            let ccr = if !mem {
+                match dm {
+                    2 | 3 => Some(old),
+                    5 | 6 => Some((old & 0x13) | nz(v, 32)),
+                    _ => None,
+                }
+            } else if matches!(dm, 2 | 3) || (dm == 7 && d == 1) {
+                Some((old & 0x10) | nz(v, 16))
+            } else {
+                None
+            };
+            if let Some(c) = ccr {
+                self.regs.sr = (self.regs.sr & !0x1f) | c;
+            }
         }
     }
 
@@ -297,14 +405,14 @@ impl Cpu {
         let mut pins = Pins(0);
         let mut dtack = true;
         if let Some(c) = cur {
-            if c.clock == 0 {
+            if c.clock == 0 && !c.fault {
                 self.waits = bus.wait_clocks(c.addr, c.is_write());
             }
-            if c.clock == 2 && self.waits > 0 {
+            if c.clock == 2 && self.waits > 0 && !c.fault {
                 self.waits -= 1;
                 dtack = false;
             }
-            if c.clock == 3 && !c.is_write() {
+            if c.clock == 3 && !c.is_write() && !c.fault {
                 let d = if c.fc == 7 {
                     let l = ((c.addr >> 1) & 7) as u8;
                     u16::from(bus.int_ack(l).unwrap_or(24 + l))
@@ -316,7 +424,7 @@ impl Cpu {
         }
         let out = self.tick(pins.with_dtack(dtack));
         if let Some(c) = cur {
-            if c.is_write() && c.clock == 2 && dtack {
+            if c.is_write() && c.clock == 2 && dtack && !c.fault {
                 bus.write(c.addr, c.fc, c.uds, c.lds, out.data());
             }
         }
