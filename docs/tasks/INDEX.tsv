@@ -111,18 +111,18 @@ E10-12	TAS	E10	E10-11	0	code	110	hermes
 E10-99	GATE E10 - registres d'etat et divers	E10	E10-12	1	gate	0	user
 E11-01	GATE E11 - demarrage des exceptions et interruptions	E11	E10-99	1	gate	0	user
 E11-02	Traitement d'exception (groupes 1 et 2) et vecteurs	E11	E11-01	0	code	150	hermes
-E11-03	Address error (frame de groupe 0)	E11	E11-02	0	code	150	none
-E11-04	Violation de privilege, opcode illegal, lignes A et F	E11	E11-03	0	code	110	none
+E11-03	Address error (frame de groupe 0)	E11	E11-02	0	code	150	hermes
+E11-04	Violation de privilege, opcode illegal, lignes A et F	E11	E11-03	0	code	110	hermes
 E11-05	Interruptions IPL0-2 et autovecteur	E11	E11-04	0	code	140	hermes
 E11-06	RESET, HALT et double faute de bus	E11	E11-05	0	code	110	hermes
-E11-07	TRAP	E11	E11-06	0	code	110	none
-E11-08	TRAPV	E11	E11-07	0	code	110	none
-E11-09	CHK	E11	E11-08	0	code	110	none
-E11-10	ILLEGAL_LINEA	E11	E11-09	0	code	110	none
-E11-11	ILLEGAL_LINEF	E11	E11-10	0	code	110	none
-E11-12	RTE	E11	E11-11	0	code	110	none
-E11-13	STOP	E11	E11-12	0	code	110	none
-E11-14	RESET	E11	E11-13	0	code	110	none
+E11-07	TRAP	E11	E11-06	0	code	110	hermes
+E11-08	TRAPV	E11	E11-07	0	code	110	hermes
+E11-09	CHK	E11	E11-08	0	code	110	hermes
+E11-10	ILLEGAL_LINEA	E11	E11-09	0	code	110	hermes
+E11-11	ILLEGAL_LINEF	E11	E11-10	0	code	110	hermes
+E11-12	RTE	E11	E11-11	0	code	110	hermes
+E11-13	STOP	E11	E11-12	0	code	110	hermes
+E11-14	RESET	E11	E11-13	0	code	110	hermes
 E12-01	Desassembleur: infrastructure et formatage des operandes	E12	E11-14	0	code	140	hermes
 E12-02	Desassembleur: transferts et arithmetique	E12	E12-01	0	code	140	hermes
 E12-03	Desassembleur: logique, decalages, bits, BCD	E12	E12-02	0	code	140	hermes

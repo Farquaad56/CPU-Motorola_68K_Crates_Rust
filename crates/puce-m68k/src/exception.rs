@@ -418,19 +418,19 @@ pub fn hook(k: u8, cpu: &mut Cpu) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::bus::Bus;
     use crate::state::CpuState;
 
-    struct Ram {
-        mem: std::vec::Vec<(u32, u16)>,
-        writes: std::vec::Vec<(u32, u16)>,
-        reads: std::vec::Vec<(u32, u8)>,
-        ipl: u8,
-        ack: Option<u8>,
-        acks: std::vec::Vec<u8>,
-        fcs: std::vec::Vec<u8>,
+    pub(crate) struct Ram {
+        pub(crate) mem: std::vec::Vec<(u32, u16)>,
+        pub(crate) writes: std::vec::Vec<(u32, u16)>,
+        pub(crate) reads: std::vec::Vec<(u32, u8)>,
+        pub(crate) ipl: u8,
+        pub(crate) ack: Option<u8>,
+        pub(crate) acks: std::vec::Vec<u8>,
+        pub(crate) fcs: std::vec::Vec<u8>,
     }
 
     impl Bus for Ram {
@@ -458,7 +458,7 @@ mod tests {
         }
     }
 
-    fn ram(mem: &[(u32, u16)]) -> Ram {
+    pub(crate) fn ram(mem: &[(u32, u16)]) -> Ram {
         Ram {
             mem: mem.to_vec(),
             writes: std::vec::Vec::new(),
@@ -471,7 +471,7 @@ mod tests {
     }
 
     /// CPU at PC = 0x20 (opcode at 0x1C), SSP 0x800, NOP in IR.
-    fn cpu(sr: u16) -> Cpu {
+    pub(crate) fn cpu(sr: u16) -> Cpu {
         let mut c = Cpu::new();
         c.load_state(&CpuState {
             a: [0; 7],
@@ -618,7 +618,7 @@ mod tests {
     }
 
     /// CPU at PC = 0x20 (opcode `op` at 0x1C), A0 = `a0`, SSP 0x800.
-    fn ae_cpu(op: u16, a0: u32, sr: u16, ssp: u32) -> Cpu {
+    pub(crate) fn ae_cpu(op: u16, a0: u32, sr: u16, ssp: u32) -> Cpu {
         let mut c = Cpu::new();
         let mut a = [0u32; 7];
         a[0] = a0;
@@ -682,7 +682,7 @@ mod tests {
     }
 
     #[test]
-    fn e11_03_no_commit_write() {
+    fn e11_03_no_commit() {
         let mut r = ram(&VEC3);
         let mut c = ae_cpu(0x3081, 0x1001, 0x2000, 0x800);
         c.step(&mut r);
@@ -712,7 +712,7 @@ mod tests {
     }
 
     /// Vector table: every vector in `vecs` leads to 0x3000.
-    fn vtable(vecs: &[u32]) -> Ram {
+    pub(crate) fn vtable(vecs: &[u32]) -> Ram {
         let mut m = std::vec::Vec::new();
         for v in vecs {
             m.push((v * 4, 0));
@@ -722,14 +722,14 @@ mod tests {
     }
 
     /// CPU with `op` in IR, `ext` in IRC, SR = `sr`, SSP 0x800.
-    fn op_cpu(op: u16, ext: u16, sr: u16) -> Cpu {
+    pub(crate) fn op_cpu(op: u16, ext: u16, sr: u16) -> Cpu {
         let mut c = ae_cpu(op, 0, sr, 0x800);
         c.regs.irc = ext;
         c
     }
 
     /// Clocks of one instruction and the PC reached.
-    fn run1(c: &mut Cpu, r: &mut Ram) -> (u32, u32) {
+    pub(crate) fn run1(c: &mut Cpu, r: &mut Ram) -> (u32, u32) {
         let n = c.step(r);
         (n, c.regs.pc)
     }
@@ -766,185 +766,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn e11_07_decode_legal() {
-        // TRAP #0..#15 take vectors 32..47.
-        for n in 0..16u16 {
-            let mut r = vtable(&[32 + u32::from(n)]);
-            let mut c = op_cpu(0x4E40 | n, 0x4E71, 0x2000);
-            assert_eq!(run1(&mut c, &mut r).1, 0x3004, "TRAP #{n}");
-        }
-    }
-
-    #[test]
-    fn e11_07_decode_illegal() {
-        // 0x4E50 is LINK, not TRAP: no vector 32+.
-        let mut r = vtable(&[4]);
-        let mut c = op_cpu(0x4E50, 0x0000, 0x2000);
-        assert_ne!(run1(&mut c, &mut r).1, 0x3004);
-    }
-
-    #[test]
-    fn e11_07_plan_basic() {
-        let mut r = vtable(&[33]);
-        let mut c = op_cpu(0x4E41, 0x4E71, 0x2000);
-        assert_eq!(run1(&mut c, &mut r).0, 34);
-    }
-
-    #[test]
-    fn e11_07_flags_sample() {
-        // TRAP stacks SR and the PC after the opcode; T is cleared, S set, flags kept.
-        let mut r = vtable(&[33]);
-        let mut c = op_cpu(0x4E41, 0x4E71, 0x801F);
-        run1(&mut c, &mut r);
-        assert_eq!(c.regs.sr, 0x201F);
-        assert_eq!(r.writes[1], (0x7FA, 0x801F));
-        assert_eq!(r.writes[0], (0x7FE, 0x1E));
-    }
-
-    #[test]
-    fn e11_08_decode_legal() {
-        let mut r = vtable(&[7]);
-        let mut c = op_cpu(0x4E76, 0x4E71, 0x2002);
-        assert_eq!(run1(&mut c, &mut r), (34, 0x3004));
-    }
-
-    #[test]
-    fn e11_08_decode_illegal() {
-        // 0x4E77 is RTR: no trap even with V set.
-        let mut r = vtable(&[7]);
-        let mut c = op_cpu(0x4E77, 0x4E71, 0x2002);
-        c.regs.a[6] = 0;
-        assert_ne!(run1(&mut c, &mut r).1, 0x3004);
-    }
-
-    #[test]
-    fn e11_08_plan_basic() {
-        // V clear: 4 clocks.
-        let mut r = vtable(&[7]);
-        let mut c = op_cpu(0x4E76, 0x4E71, 0x2000);
-        assert_eq!(run1(&mut c, &mut r).0, 4);
-    }
-
-    #[test]
-    fn e11_08_flags_sample() {
-        let mut r = vtable(&[7]);
-        let mut c = op_cpu(0x4E76, 0x4E71, 0x0003);
-        run1(&mut c, &mut r);
-        assert_eq!(c.regs.sr, 0x2003);
-    }
-
-    #[test]
-    fn e11_09_decode_legal() {
-        // CHK D1,D0: D0 above the bound takes vector 6.
-        let mut r = vtable(&[6]);
-        let mut c = op_cpu(0x4181, 0x4E71, 0x2000);
-        c.regs.d[0] = 20;
-        c.regs.d[1] = 10;
-        assert_eq!(run1(&mut c, &mut r).1, 0x3004);
-    }
-
-    #[test]
-    fn e11_09_decode_illegal() {
-        // 0x4180 with an odd size field (LEA/CHK long are illegal on the 68000): 0x41C0 is LEA.
-        let mut r = vtable(&[6]);
-        let mut c = op_cpu(0x41C0, 0x4E71, 0x2000);
-        assert_ne!(run1(&mut c, &mut r).1, 0x3004);
-    }
-
-    #[test]
-    fn e11_09_plan_basic() {
-        // In range: 10 clocks; D0 > bound: 38; D0 < 0: 40.
-        let cases = [(5u32, 10u32, 10u32), (20, 10, 38), (0xFFFF_FFFF, 10, 40)];
-        for (d0, d1, clocks) in cases {
-            let mut r = vtable(&[6]);
-            let mut c = op_cpu(0x4181, 0x4E71, 0x2000);
-            c.regs.d[0] = d0;
-            c.regs.d[1] = d1;
-            assert_eq!(run1(&mut c, &mut r).0, clocks, "D0={d0:#x}");
-        }
-    }
-
-    #[test]
-    fn e11_09_flags_sample() {
-        // D0 above the bound clears N; D0 negative sets it.
-        for (d0, n) in [(20u32, 0u16), (0xFFFF_FFFF, 8)] {
-            let mut r = vtable(&[6]);
-            let mut c = op_cpu(0x4181, 0x4E71, 0x2000);
-            c.regs.d[0] = d0;
-            c.regs.d[1] = 10;
-            run1(&mut c, &mut r);
-            assert_eq!(c.regs.sr & 8, n, "D0={d0:#x}");
-        }
-    }
-
-    #[test]
-    fn e11_10_decode_legal() {
-        for op in [0xA000u16, 0xA123, 0xAFFF] {
-            let mut r = vtable(&[10]);
-            let mut c = op_cpu(op, 0x4E71, 0x2000);
-            assert_eq!(run1(&mut c, &mut r).1, 0x3004);
-        }
-    }
-
-    #[test]
-    fn e11_10_decode_illegal() {
-        let mut r = vtable(&[10]);
-        let mut c = op_cpu(0xB000, 0x4E71, 0x2000);
-        assert_ne!(run1(&mut c, &mut r).1, 0x3004);
-    }
-
-    #[test]
-    fn e11_10_plan_basic() {
-        let mut r = vtable(&[10]);
-        let mut c = op_cpu(0xA000, 0x4E71, 0x2000);
-        assert_eq!(run1(&mut c, &mut r).0, 34);
-    }
-
-    #[test]
-    fn e11_10_flags_sample() {
-        // The stacked PC is the address of the line A opcode itself.
-        let mut r = vtable(&[10]);
-        let mut c = op_cpu(0xA000, 0x4E71, 0x2015);
-        run1(&mut c, &mut r);
-        assert_eq!(c.regs.sr, 0x2015);
-        assert_eq!(r.writes[0], (0x7FE, 0x1C));
-    }
-
-    #[test]
-    fn e11_11_decode_legal() {
-        for op in [0xF000u16, 0xF123, 0xFFFF] {
-            let mut r = vtable(&[11]);
-            let mut c = op_cpu(op, 0x4E71, 0x2000);
-            assert_eq!(run1(&mut c, &mut r).1, 0x3004);
-        }
-    }
-
-    #[test]
-    fn e11_11_decode_illegal() {
-        let mut r = vtable(&[11]);
-        let mut c = op_cpu(0xE000, 0x4E71, 0x2000);
-        assert_ne!(run1(&mut c, &mut r).1, 0x3004);
-    }
-
-    #[test]
-    fn e11_11_plan_basic() {
-        let mut r = vtable(&[11]);
-        let mut c = op_cpu(0xF000, 0x4E71, 0x2000);
-        assert_eq!(run1(&mut c, &mut r).0, 34);
-    }
-
-    #[test]
-    fn e11_11_flags_sample() {
-        let mut r = vtable(&[11]);
-        let mut c = op_cpu(0xF000, 0x4E71, 0x2015);
-        run1(&mut c, &mut r);
-        assert_eq!(c.regs.sr, 0x2015);
-        assert_eq!(r.writes[0], (0x7FE, 0x1C));
-    }
-
     /// Supervisor stack holding SR and PC for an RTE.
-    fn rte_ram(sr: u16, pc: u32) -> Ram {
+    pub(crate) fn rte_ram(sr: u16, pc: u32) -> Ram {
         ram(&[
             (0x800, sr),
             (0x802, (pc >> 16) as u16),
@@ -952,105 +775,6 @@ mod tests {
             (0x3000, 0x4E71),
             (0x3002, 0x4E71),
         ])
-    }
-
-    #[test]
-    fn e11_12_decode_legal() {
-        let mut r = rte_ram(0x0004, 0x3000);
-        let mut c = op_cpu(0x4E73, 0x4E71, 0x2000);
-        assert_eq!(run1(&mut c, &mut r).1, 0x3004);
-    }
-
-    #[test]
-    fn e11_12_decode_illegal() {
-        // 0x4E74 is RTD (68010): illegal on the 68000.
-        let mut r = vtable(&[4]);
-        let mut c = op_cpu(0x4E74, 0x0000, 0x2000);
-        assert_eq!(run1(&mut c, &mut r), (34, 0x3004));
-    }
-
-    #[test]
-    fn e11_12_plan_basic() {
-        let mut r = rte_ram(0x0004, 0x3000);
-        let mut c = op_cpu(0x4E73, 0x4E71, 0x2000);
-        assert_eq!(run1(&mut c, &mut r).0, 20);
-    }
-
-    #[test]
-    fn e11_12_flags_sample() {
-        // SR comes back from the stack (user mode), the stack pointer moves by 6.
-        let mut r = rte_ram(0x0015, 0x3000);
-        let mut c = op_cpu(0x4E73, 0x4E71, 0x2000);
-        run1(&mut c, &mut r);
-        assert_eq!(c.regs.sr, 0x0015);
-        assert_eq!(c.regs.ssp, 0x806);
-    }
-
-    #[test]
-    fn e11_13_decode_legal() {
-        let mut r = vtable(&[]);
-        let mut c = op_cpu(0x4E72, 0x2000, 0x2700);
-        c.step(&mut r);
-        assert!(c.is_stopped());
-    }
-
-    #[test]
-    fn e11_13_decode_illegal() {
-        // 0x4E71 is NOP: it does not stop.
-        let mut r = vtable(&[]);
-        let mut c = op_cpu(0x4E71, 0x4E71, 0x2700);
-        c.step(&mut r);
-        assert!(!c.is_stopped());
-    }
-
-    #[test]
-    fn e11_13_plan_basic() {
-        // STOP takes 4 clocks, then the CPU idles 4 clocks per step.
-        let mut r = vtable(&[]);
-        let mut c = op_cpu(0x4E72, 0x2000, 0x2700);
-        assert_eq!(c.step(&mut r), 4);
-        assert_eq!(c.step(&mut r), 4);
-        assert!(c.is_stopped());
-    }
-
-    #[test]
-    fn e11_13_flags_sample() {
-        // The immediate word replaces SR.
-        let mut r = vtable(&[]);
-        let mut c = op_cpu(0x4E72, 0x2015, 0x2700);
-        c.step(&mut r);
-        assert_eq!(c.regs.sr, 0x2015);
-    }
-
-    #[test]
-    fn e11_14_decode_legal() {
-        let mut r = vtable(&[]);
-        let mut c = op_cpu(0x4E70, 0x4E71, 0x2000);
-        assert_eq!(c.step(&mut r), 132);
-    }
-
-    #[test]
-    fn e11_14_decode_illegal() {
-        // 0x4E71 is NOP, not RESET.
-        let mut r = vtable(&[]);
-        let mut c = op_cpu(0x4E71, 0x4E71, 0x2000);
-        assert_eq!(c.step(&mut r), 4);
-    }
-
-    #[test]
-    fn e11_14_plan_basic() {
-        let mut r = vtable(&[]);
-        let mut c = op_cpu(0x4E70, 0x4E71, 0x2000);
-        assert_eq!(c.step(&mut r), 132);
-    }
-
-    #[test]
-    fn e11_14_flags_sample() {
-        // RESET asserts the reset line only: registers and flags are untouched.
-        let mut r = vtable(&[]);
-        let mut c = op_cpu(0x4E70, 0x4E71, 0x201F);
-        c.step(&mut r);
-        assert_eq!(c.regs.sr, 0x201F);
     }
 
     #[test]
