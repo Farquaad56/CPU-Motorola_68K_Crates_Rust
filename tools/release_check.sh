@@ -32,11 +32,8 @@ bash tools/hygiene.sh
 step "cargo build --release --workspace"
 cargo build --release --workspace
 
-step "test suites (suite all)"
-cargo run --release -p puce-m68k-cli -- suite all --json suites.json
-
-step "suites report"
-"$PY" docs/tools/suites_report.py suites.json
+step "SingleStepTests (strict, compared with tests/baseline.json)"
+cargo run --release -p puce-m68k-cli -- ssc tests/singlestep --strict --compare tests/baseline.json
 
 echo
 echo "release_check: all checks passed"
