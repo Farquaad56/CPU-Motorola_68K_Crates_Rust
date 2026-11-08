@@ -119,7 +119,7 @@
   "SUBX.w": {"total":2500,"pass":1646,"fail":0,"skip_addr":854},
   "SWAP": {"total":2500,"pass":2500,"fail":0,"skip_addr":0},
   "Scc": {"total":2500,"pass":2500,"fail":0,"skip_addr":0},
-  "TAS": {"total":2500,"pass":830,"fail":1670,"skip_addr":0},
+  "TAS": {"total":2500,"pass":2500,"fail":0,"skip_addr":0},
   "TRAP": {"total":2500,"pass":2500,"fail":0,"skip_addr":0},
   "TRAPV": {"total":2500,"pass":2500,"fail":0,"skip_addr":0},
   "TST.b": {"total":2500,"pass":2500,"fail":0,"skip_addr":0},

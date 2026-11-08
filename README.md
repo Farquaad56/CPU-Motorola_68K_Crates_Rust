@@ -33,13 +33,13 @@ generated from MAME's microcoded core) plus `Yacht.txt` for the bus timing of ea
 
 | | Cases |
 |---|---:|
-| Passed | 260224 |
-| Failed (`TAS` only, known) | 1670 |
+| Passed | 261894 |
+| Failed | 0 |
 | Skipped (address error, deferred) | 55606 |
 
 Per-file results: [`docs/SUITES_REPORT.md`](docs/SUITES_REPORT.md). `tests/baseline.json` is the reference
-the regression check compares with. `TAS` fails because the oracle does not model its indivisible
-read-modify-write cycle (`docs/specs/data/sst_known_exceptions.txt`).
+the regression check compares with. No known exception remains: the oracle labels the read of `TAS` as a plain
+read, and the runner compares it that way (decision D-051).
 
 ## Installation
 

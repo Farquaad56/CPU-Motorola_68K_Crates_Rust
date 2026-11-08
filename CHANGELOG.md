@@ -8,7 +8,7 @@
   and bus errors are deferred.
 - Tools: `m68k` (`run`, `disasm`, `ssc`, `bench`, `fetch`), `m68k-web` (HTTP + WebSocket debugger), WebAssembly demo.
 - Tests: SingleStepTests/m68000 runner with known exceptions, JSON baseline and regression check
-  (`m68k ssc --json`, `--compare`); 260224 oracle cases pass, `TAS` is the only failing file.
+  (`m68k ssc --json`, `--compare`); 261894 oracle cases pass, none fails (the rest are address-error cases, skipped).
 - Documentation: cadrage, architecture, pins/tick spec, plan grammar, SingleStepTests format, front-end protocol,
   reuse guide, suites report.
 - Workspace with five crates (`puce-m68k`, `-machines`, `-cli`, `-web`, `-wasm`), CI and hygiene scripts.

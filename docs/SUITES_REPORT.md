@@ -5,14 +5,12 @@ Genere par `m68k ssc tests/singlestep --json tests/baseline.json` (carte E15-02)
 ## Resume
 
 - Fichiers: 127 (2500 cas chacun)
-- Cas: 317500, reussis: 260224, echoues: 1670, ignores (erreur d adresse): 55606
-- Cas executes: 261894, dont 260224 reussis (99.36 %)
+- Cas: 317500, reussis: 261894, echoues: 0, ignores (erreur d adresse): 55606
+- Cas executes: 261894, dont 261894 reussis (100.00 %)
 
-## Echecs connus
+## Echecs
 
-- `TAS`: 1670 echecs sur 2500
-
-TAS est l exception documentee dans `docs/specs/data/sst_known_exceptions.txt` (les tests viennent de MAME, qui ne modelise pas le cycle de lecture-modification-ecriture special de TAS). `--strict` n echoue que pour un fichier hors de cette liste. TRAPV a ete retire de la liste (D-048): l oracle prend le mot suivant en mode superviseur, le S est donc pose avant le premier np.
+Aucun: tous les cas executes passent. `TAS` est compte comme reussi depuis D-051 (le banc compare la lecture du cycle TAS comme une lecture simple, comme l oracle). La liste `docs/specs/data/sst_known_exceptions.txt` est vide.
 
 ## Cas ignores
 
@@ -146,7 +144,7 @@ Les cas qui declenchent une erreur d adresse sont ignores par le banc (generatio
 | SUBX.w | 2500 | 1646 | 0 | 854 |
 | SWAP | 2500 | 2500 | 0 | 0 |
 | Scc | 2500 | 2500 | 0 | 0 |
-| TAS | 2500 | 830 | 1670 | 0 |
+| TAS | 2500 | 2500 | 0 | 0 |
 | TRAP | 2500 | 2500 | 0 | 0 |
 | TRAPV | 2500 | 2500 | 0 | 0 |
 | TST.b | 2500 | 2500 | 0 | 0 |

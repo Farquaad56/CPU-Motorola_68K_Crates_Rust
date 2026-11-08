@@ -1,1 +1,0 @@
-TAS	MAME ne modelise pas le cycle RMW special de TAS

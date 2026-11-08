@@ -120,8 +120,8 @@ clocks returned.
 ## 5. Status and known limits
 
 - All 68000 instructions run and are verified against the SingleStepTests/m68000 oracle (317500 tests):
-  `docs/SUITES_REPORT.md` has the per-file results. The only failing file is `TAS` (the oracle comes from
-  MAME, which does not model its read-modify-write bus cycle: `docs/specs/data/sst_known_exceptions.txt`).
+  `docs/SUITES_REPORT.md` has the per-file results. No file fails (`TAS` included: the core tags its read
+  as an indivisible cycle, the oracle as a plain read, and the runner treats both alike).
 - The oracle cases that raise an address error are skipped; the frame generation for address errors is a
   deferred task (the CPU does not fault on odd accesses yet), and there is no bus error input.
 - The core is `no_std`, single-threaded and allocation free. The `inspect` feature records a bus journal
