@@ -198,6 +198,11 @@ impl Cpu {
         self.halted
     }
 
+    /// True after STOP, until an interrupt is taken or the CPU is reset.
+    pub fn is_stopped(&self) -> bool {
+        self.stopped
+    }
+
     /// Halts the processor.
     pub fn halt(&mut self) {
         self.halted = true;

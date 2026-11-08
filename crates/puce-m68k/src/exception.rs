@@ -38,6 +38,10 @@ pub const HK_RST_SSP: u8 = 0xFB;
 pub const HK_VEC_INSN: u8 = 0xFC;
 /// Hook: the pushed PC is the address of the word after the opcode (`PC - 2`).
 pub const HK_PC_NEXT: u8 = 0xFD;
+/// Hook: saves SR and enters supervisor mode before the first prefetch (TRAPV).
+pub const HK_SUP_EARLY: u8 = 0xFE;
+/// Hook: the pushed PC is `PC - 4`, taken after the prefetch.
+pub const HK_PC_SET: u8 = 0xFF;
 
 /// Vector number of the privilege violation.
 pub const VEC_PRIVILEGE: u8 = 8;
@@ -141,7 +145,12 @@ static TRAP: [Tok; 16] = frame_plan![
     Tok::H(HK_PRIV),
     Tok::H(HK_PC_NEXT)
 ];
-static TRAPV: [Tok; 15] = frame_plan![Tok::Pf, Tok::H(HK_VEC_INSN), Tok::H(HK_PRIV)];
+static TRAPV: [Tok; 16] = frame_plan![
+    Tok::H(HK_SUP_EARLY),
+    Tok::Pf,
+    Tok::H(HK_VEC_INSN),
+    Tok::H(HK_PC_SET)
+];
 static CHK_POS: [Tok; 16] = frame_plan![
     Tok::H(HK_VEC_INSN),
     Tok::N(10),
@@ -160,7 +169,7 @@ pub fn trap_plan() -> Plan {
     &TRAP
 }
 
-/// TRAPV with V set (34 clocks): `np` takes the place of the first idle cycle.
+/// TRAPV with V set (34 clocks): supervisor mode is entered before `np`, which takes the place\n/// of the first idle cycle (the oracle fetches it with FC = supervisor program).
 pub fn trapv_plan() -> Plan {
     &TRAPV
 }
@@ -207,7 +216,7 @@ pub fn reset_plan() -> Plan {
 
 /// True when `k` is one of the exception hooks.
 pub fn is_hook(k: u8) -> bool {
-    (HK_PRIV..=HK_PC_NEXT).contains(&k)
+    (HK_PRIV..=HK_PC_SET).contains(&k)
 }
 
 fn enter_supervisor(cpu: &mut Cpu) {
@@ -230,6 +239,8 @@ pub fn hook(k: u8, cpu: &mut Cpu) {
             };
         }
         HK_PC_NEXT => cpu.lat.aux = cpu.lat.aux.wrapping_add(2),
+        HK_SUP_EARLY => enter_supervisor(cpu),
+        HK_PC_SET => cpu.lat.aux = cpu.regs.pc.wrapping_sub(4),
         HK_INT_START => {
             enter_supervisor(cpu);
             cpu.regs.sr = (cpu.regs.sr & !0x0700) | (u16::from(cpu.lat.level) << 8);

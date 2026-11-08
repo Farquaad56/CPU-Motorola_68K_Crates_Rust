@@ -76,10 +76,10 @@ pub mod i_sub;
 pub mod i_suba;
 pub mod i_subx;
 pub mod i_swap;
+pub mod i_system;
 pub mod i_tas;
 pub mod i_tst;
 pub mod i_unlink;
-pub mod i_system;
 // @mods
 pub mod i_nop;
 

@@ -12,13 +12,14 @@ use crate::decode::{decode, InsnId};
 use crate::ea::Ea;
 use core::fmt::{self, Write};
 
-const MNEMONICS: [&str; 69] = [
+/// Index 69 (system instructions: trap, trapv, rte, stop, reset, chk) has no common prefix.
+const MNEMONICS: [&str; 70] = [
     "dc.w", "nop", "move", "movea", "moveq", "movem", "movep", "lea", "pea", "exg", "swap", "ext",
     "link", "unlk", "clr", "add", "sub", "adda", "suba", "addx", "subx", "neg", "negx", "tst",
     "cmp", "cmpa", "mulu", "muls", "divu", "divs", "and", "or", "eor", "not", "asl", "asr", "lsl",
     "lsr", "rol", "ror", "roxl", "roxr", "btst", "bset", "bclr", "bchg", "abcd", "sbcd", "nbcd",
     "b", "bsr", "db", "s", "jmp", "jsr", "rts", "rtr", "andi", "andi", "ori", "ori", "eori",
-    "eori", "move", "move", "move", "move", "move", "tas",
+    "eori", "move", "move", "move", "move", "move", "tas", "",
 ];
 
 /// Leading mnemonic of an instruction identifier (`dc.w` for `InsnId::ILLEGAL`). The text written

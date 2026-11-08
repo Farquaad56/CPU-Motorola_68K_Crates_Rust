@@ -389,7 +389,7 @@ impl Machine {
         let pc = self.pc_instr();
         let n = self.cpu.step(&mut self.bus);
         self.absorb_journal();
-        if n == 0 {
+        if n == 0 || self.cpu.is_stopped() {
             self.status = self.stopped_status();
             return false;
         }
@@ -1082,12 +1082,12 @@ mod tests {
 
     #[test]
     fn e13_01_console_and_halt() {
-        // move.b #$41,$ff00.w ; (0xA000 = line A: stops)
-        let mut m = machine(&[0x11FC, 0x0041, 0xFF00, 0xA000]);
+        // move.b #$41,$ff00.w ; stop #$2700
+        let mut m = machine(&[0x11FC, 0x0041, 0xFF00, 0x4E72, 0x2700]);
         m.run_n(10, false);
         let s = m.snapshot(true);
         assert_eq!(s.console_delta, "A");
-        assert_eq!(s.status, "halted");
+        assert_eq!(s.status, "done");
         assert!(s.wlog.contains(&CONSOLE_ADDR));
         assert_eq!(m.snapshot(true).console_delta, "");
     }

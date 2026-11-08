@@ -939,7 +939,7 @@ mod tests {
             "/../../docs/specs/data/sst_known_exceptions.txt"
         );
         let known = load_known(Path::new(path)).unwrap();
-        assert!(known.contains(&"TAS".to_string()) && known.contains(&"TRAPV".to_string()));
+        assert!(known.contains(&"TAS".to_string()));
     }
 
     #[test]

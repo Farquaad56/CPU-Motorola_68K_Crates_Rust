@@ -1,2 +1,1 @@
 TAS	MAME ne modelise pas le cycle RMW special de TAS
-TRAPV	comportement douteux des tests (bit S), a revalider en E10

@@ -169,7 +169,13 @@ mod tests {
 
     fn run(op: u16, ext: u16, sr: u16, d: [u32; 8]) -> (Cpu, u32) {
         let mut r = Ram {
-            mem: std::vec![(0x18, 0), (0x1C, 0x0000), (0x1E, 0x1000), (0x80, 0), (0x82, 0x2000)],
+            mem: std::vec![
+                (0x18, 0),
+                (0x1C, 0x0000),
+                (0x1E, 0x1000),
+                (0x80, 0),
+                (0x82, 0x2000)
+            ],
         };
         let mut cpu = Cpu::new();
         cpu.load_state(&CpuState {

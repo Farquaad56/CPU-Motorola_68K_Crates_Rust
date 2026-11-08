@@ -48,6 +48,12 @@ pub enum Cmd {
         /// Known exceptions file (default docs/specs/data/sst_known_exceptions.txt).
         #[arg(long)]
         known: Option<PathBuf>,
+        /// Write the per-file summary (total, pass, fail, skip_addr) to this JSON file.
+        #[arg(long)]
+        json: Option<PathBuf>,
+        /// Exit with 1 if a file does worse than in this baseline JSON file.
+        #[arg(long)]
+        compare: Option<PathBuf>,
     },
     /// Disassemble a binary file.
     Disasm {
@@ -89,6 +95,8 @@ fn main() {
             strict,
             max_fail,
             known,
+            json,
+            compare,
         } => commands::ssc(&commands::SscArgs {
             dir,
             filters: filter,
@@ -96,6 +104,8 @@ fn main() {
             strict: *strict,
             max_fail: *max_fail,
             known: known.as_deref(),
+            json: json.as_deref(),
+            compare: compare.as_deref(),
         }),
         Cmd::Disasm { file, org, count } => commands::disasm(file, org, *count).map(|()| 0),
         Cmd::Bench { clocks } => commands::bench_cmd(*clocks).map(|()| 0),
@@ -166,6 +176,7 @@ mod tests {
                 epic,
                 max_fail,
                 known,
+                ..
             } => {
                 assert_eq!(dir, PathBuf::from("tests/singlestep"));
                 assert_eq!(filter, ["NOP"]);
@@ -226,5 +237,26 @@ mod tests {
         let c = Cli::try_parse_from(["m68k", "bench", "--clocks", "1000"]).unwrap();
         assert!(matches!(c.command, Cmd::Bench { clocks: 1000 }));
         assert!(Cli::try_parse_from(["m68k", "bench", "--clocks", "x"]).is_err());
+    }
+
+    #[test]
+    fn e15_02_parse_json_compare() {
+        let c = Cli::try_parse_from([
+            "m68k",
+            "ssc",
+            "d",
+            "--json",
+            "b.json",
+            "--compare",
+            "c.json",
+        ])
+        .unwrap();
+        match c.command {
+            Cmd::Ssc { json, compare, .. } => {
+                assert_eq!(json, Some(PathBuf::from("b.json")));
+                assert_eq!(compare, Some(PathBuf::from("c.json")));
+            }
+            c => panic!("{c:?}"),
+        }
     }
 }

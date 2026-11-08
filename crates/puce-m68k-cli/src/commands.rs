@@ -90,6 +90,10 @@ pub fn run_image(data: &[u8], max_instr: u64, org: Option<u32>) -> RunReport {
         }
         rep.instructions += 1;
         rep.clocks += u64::from(n);
+        if cpu.is_stopped() {
+            rep.stopped = true;
+            break;
+        }
     }
     rep.state = cpu.state();
     rep
@@ -119,7 +123,7 @@ pub fn format_report(r: &RunReport) -> String {
         r.instructions,
         r.clocks,
         if r.stopped {
-            "stopped (STOP or illegal opcode)"
+            "stopped (STOP)"
         } else {
             "max-instr reached"
         }
@@ -208,6 +212,94 @@ pub struct SscArgs<'a> {
     pub max_fail: Option<u32>,
     /// `--known`.
     pub known: Option<&'a Path>,
+    /// `--json`: write the per-file summary there.
+    pub json: Option<&'a Path>,
+    /// `--compare`: fail if a file does worse than in this baseline.
+    pub compare: Option<&'a Path>,
+}
+
+/// One file of the baseline (`tests/baseline.json`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BaseEntry {
+    /// File stem (`ADD.b`).
+    pub stem: String,
+    /// Tests in the file.
+    pub total: u32,
+    /// Tests that pass.
+    pub pass: u32,
+    /// Tests that fail.
+    pub fail: u32,
+    /// Tests skipped (address errors).
+    pub skip_addr: u32,
+}
+
+/// The baseline file: one line and one object per file stem, in the order given.
+pub fn baseline_json(sums: &[FileSummary]) -> String {
+    let mut o = String::from("{\n");
+    for (i, s) in sums.iter().enumerate() {
+        o += &format!(
+            "  \"{}\": {{\"total\":{},\"pass\":{},\"fail\":{},\"skip_addr\":{}}}{}\n",
+            s.stem,
+            s.total,
+            s.passed,
+            s.failed,
+            s.skipped_addr_error,
+            if i + 1 < sums.len() { "," } else { "" }
+        );
+    }
+    o + "}\n"
+}
+
+/// Reads the text written by [`baseline_json`].
+pub fn parse_baseline(text: &str) -> Result<Vec<BaseEntry>, String> {
+    let mut out = Vec::new();
+    for raw in text.lines() {
+        let l = raw.trim().trim_end_matches(',');
+        if l.is_empty() || l == "{" || l == "}" {
+            continue;
+        }
+        let bad = || format!("bad baseline line: {raw}");
+        let rest = l.strip_prefix('"').ok_or_else(bad)?;
+        let (stem, body) = rest.split_once("\": {").ok_or_else(bad)?;
+        let body = body.strip_suffix('}').ok_or_else(bad)?;
+        let mut e = BaseEntry {
+            stem: stem.to_string(),
+            total: 0,
+            pass: 0,
+            fail: 0,
+            skip_addr: 0,
+        };
+        for f in body.split(',') {
+            let (k, v) = f.split_once(':').ok_or_else(bad)?;
+            let v: u32 = v.trim().parse().map_err(|_| bad())?;
+            match k.trim().trim_matches('"') {
+                "total" => e.total = v,
+                "pass" => e.pass = v,
+                "fail" => e.fail = v,
+                "skip_addr" => e.skip_addr = v,
+                _ => return Err(bad()),
+            }
+        }
+        out.push(e);
+    }
+    Ok(out)
+}
+
+/// Regressions of `cur` against `base`: a file that passes fewer tests or fails more. With `full`
+/// (the whole suite was run) a file of the baseline that was not run is also a regression.
+pub fn compare(cur: &[FileSummary], base: &[BaseEntry], full: bool) -> Vec<String> {
+    let mut out = Vec::new();
+    for b in base {
+        match cur.iter().find(|s| s.stem == b.stem) {
+            Some(s) if s.passed < b.pass || s.failed > b.fail => out.push(format!(
+                "{}: pass {} -> {}, fail {} -> {}",
+                b.stem, b.pass, s.passed, b.fail, s.failed
+            )),
+            None if full => out.push(format!("{}: missing from the run", b.stem)),
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Exit code of `ssc`: with `strict`, 1 if a file that is not a known exception fails.
@@ -222,7 +314,8 @@ fn line(s: &FileSummary) -> String {
     )
 }
 
-/// `m68k ssc <dir> [--filter F]... [--epic E] [--strict] [--max-fail N] [--known FILE]`
+/// `m68k ssc <dir> [--filter F]... [--epic E] [--strict] [--max-fail N] [--known FILE]
+/// [--json FILE] [--compare FILE]`
 pub fn ssc(a: &SscArgs) -> Result<i32, String> {
     let mut sel = Selection::from_filters(a.filters);
     if let Some(epic) = a.epic {
@@ -264,6 +357,7 @@ pub fn ssc(a: &SscArgs) -> Result<i32, String> {
     let mut ram = FlatRam::new();
     let mut summaries = Vec::new();
     let mut failed_total = 0u32;
+    let mut cut = false;
     for (stem, path) in &files {
         if !sel.matches(stem) {
             continue;
@@ -277,6 +371,7 @@ pub fn ssc(a: &SscArgs) -> Result<i32, String> {
         summaries.push(s);
         if a.max_fail.is_some_and(|n| failed_total >= n) {
             println!("stopped: --max-fail {} reached", a.max_fail.unwrap_or(0));
+            cut = true;
             break;
         }
     }
@@ -289,7 +384,27 @@ pub fn ssc(a: &SscArgs) -> Result<i32, String> {
         first_failures: Vec::new(),
     };
     println!("{}", line(&total));
-    Ok(exit_code(&summaries, &known, a.strict))
+    let mut code = exit_code(&summaries, &known, a.strict);
+    if let Some(p) = a.json {
+        std::fs::write(p, baseline_json(&summaries))
+            .map_err(|e| format!("{}: {e}", p.display()))?;
+        println!("summary written to {}", p.display());
+    }
+    if let Some(p) = a.compare {
+        let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
+        let base = parse_baseline(&text)?;
+        let full = a.filters.is_empty() && a.epic.is_none() && !cut;
+        let regress = compare(&summaries, &base, full);
+        for r in &regress {
+            println!("REGRESSION {r}");
+        }
+        if regress.is_empty() {
+            println!("compare: no regression against {}", p.display());
+        } else {
+            code = 1;
+        }
+    }
+    Ok(code)
 }
 
 /// Lines `addr: bytes  text` of the instructions found in `data` (loaded at `org`).
@@ -364,9 +479,9 @@ mod tests {
         assert!(!r.stopped);
         assert_eq!(r.clocks, 5 * 4 + 5 * 10);
         assert!(format_report(&r).contains("instructions=10"));
-        // stops on an opcode that does not run (0xA000)
-        let r = run_image(&[0xA0, 0x00], 10, Some(0x1000));
-        assert!(r.stopped && r.instructions == 0);
+        // stops after STOP #$2700
+        let r = run_image(&[0x4E, 0x72, 0x27, 0x00], 10, Some(0x1000));
+        assert!(r.stopped && r.instructions == 1);
         // vectors: SSP 0x800, PC 0x100 (moveq #5,d0)
         let mut img = vec![0u8; 0x104];
         img[2] = 0x08;
@@ -440,5 +555,74 @@ mod tests {
         assert!(!r.stopped);
         assert_eq!(r.state.d[2], 1);
         assert!(r.state.d[0] > 900, "{}", r.state.d[0]);
+    }
+
+    fn fs(stem: &str, total: u32, passed: u32) -> FileSummary {
+        FileSummary {
+            stem: stem.into(),
+            total,
+            passed,
+            failed: total - passed,
+            skipped_addr_error: 0,
+            first_failures: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn e15_02_json_format() {
+        let sums = [fs("ADD.b", 2500, 2500), fs("TAS", 2500, 2490)];
+        let j = baseline_json(&sums);
+        assert_eq!(j.matches("\": {").count(), 2, "{j}");
+        assert!(
+            j.contains("  \"ADD.b\": {\"total\":2500,\"pass\":2500,\"fail\":0,\"skip_addr\":0},\n")
+        );
+        assert!(
+            j.contains("\"TAS\": {\"total\":2500,\"pass\":2490,\"fail\":10,\"skip_addr\":0}\n}")
+        );
+        let back = parse_baseline(&j).unwrap();
+        assert_eq!(back.len(), 2);
+        assert_eq!(
+            back[1],
+            BaseEntry {
+                stem: "TAS".into(),
+                total: 2500,
+                pass: 2490,
+                fail: 10,
+                skip_addr: 0
+            }
+        );
+        assert!(parse_baseline("{\n  nonsense\n}").is_err());
+    }
+
+    #[test]
+    fn e15_02_compare_regress() {
+        let base = parse_baseline(&baseline_json(&[
+            fs("ADD.b", 2500, 2500),
+            fs("NOP", 2500, 2500),
+        ]))
+        .unwrap();
+        let cur = [fs("ADD.b", 2500, 2499), fs("NOP", 2500, 2500)];
+        let r = compare(&cur, &base, true);
+        assert_eq!(r, ["ADD.b: pass 2500 -> 2499, fail 0 -> 1"]);
+        // a file missing from a full run is a regression, not from a partial one
+        assert_eq!(
+            compare(&cur[1..], &base, true),
+            ["ADD.b: missing from the run"]
+        );
+        assert_eq!(compare(&cur[1..], &base, false), Vec::<String>::new());
+    }
+
+    #[test]
+    fn e15_02_compare_same() {
+        let sums = [fs("ADD.b", 2500, 2500), fs("TAS", 2500, 2490)];
+        let base = parse_baseline(&baseline_json(&sums)).unwrap();
+        assert!(compare(&sums, &base, true).is_empty());
+        // doing better is not a regression
+        assert!(compare(
+            &[fs("ADD.b", 2500, 2500), fs("TAS", 2500, 2500)],
+            &base,
+            true
+        )
+        .is_empty());
     }
 }

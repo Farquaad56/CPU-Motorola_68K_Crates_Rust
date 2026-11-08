@@ -24,11 +24,7 @@ fn text(op: u16, ext: &[u16; 4]) -> (String, usize) {
 
 /// Valid 68000 instructions the core does not decode yet (execution deferred, D-043).
 fn deferred_text(s: &str) -> bool {
-    [
-        "illegal", "reset", "stop #", "rte", "trapv", "trap #", "chk.w ",
-    ]
-    .iter()
-    .any(|p| s.starts_with(p))
+    ["illegal"].iter().any(|p| s.starts_with(p))
 }
 
 #[test]
@@ -64,8 +60,8 @@ fn e12_05_illegal_matches_decode() {
             assert!(!s.starts_with("dc.w"), "{op:#06x}: {s}");
         }
     }
-    // illegal + reset + stop + rte + trapv + 16 trap + 8 * 53 chk
-    assert_eq!(deferred, 5 + 16 + 8 * 53);
+    // only 0x4AFC (ILLEGAL) stays undecoded (it raises vector 4 like any illegal opcode)
+    assert_eq!(deferred, 1);
 }
 
 #[test]
@@ -126,6 +122,20 @@ fn e12_05_length_matches() {
             continue;
         }
         // ANDI/ORI/EORI to CCR/SR: two words. Their plan and MOVE to CCR/SR re-read the PC once.
+        if id.0 == 69 {
+            // TRAP, TRAPV, RTE, RESET: one word; STOP: two; CHK: opcode and EA extension words.
+            let chk = op & 0xF1C0 == 0x4180;
+            let want = if op == 0x4E72 {
+                2
+            } else if chk {
+                let ea = Ea::decode(((op >> 3) & 7) as u8, (op & 7) as u8).unwrap();
+                1 + usize::from(ea_ext_words(ea, Size::Word))
+            } else {
+                1
+            };
+            assert_eq!(n, want, "{op:#06x}: {s}");
+            continue;
+        }
         if (57..=62).contains(&id.0) {
             assert_eq!(n, 2, "{op:#06x}: {s}");
             continue;
