@@ -3,7 +3,7 @@
 //! Every instruction card adds a submodule `i_xxx` exposing `ID`, `RULES`, `plan` and `hook`, then:
 //! 1. declares it below (`pub mod i_xxx;`),
 //! 2. adds its `RULES` to `GROUPS` (both the normal and the test list),
-//! 3. adds one arm to [`plan_for`] and one to [`run_hook`].
+//! 3. adds one arm to `plan_for` and one to `run_hook`.
 //!
 //! The global rule list is the const concatenation of the groups (`concat`); two rules that
 //! capture the same opcode make the build fail (see `decode::build_table`).
